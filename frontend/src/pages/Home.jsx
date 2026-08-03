@@ -70,7 +70,7 @@ export default function Home() {
       {error && (
         <p className="vacio">
           No se pudo conectar con el backend ({error}). Revisa que <code>uvicorn app.main:app --reload</code> esté
-          corriendo en <code>{BACKEND_URL}</code>.
+          corriendo en <code>{BACKEND_URL || "http://127.0.0.1:8000"}</code>.
         </p>
       )}
 
