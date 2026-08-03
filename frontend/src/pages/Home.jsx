@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listarProyectos } from "../api";
+import { listarProyectos, BACKEND_URL } from "../api";
 
 // Escala de avance del trámite -> color institucional.
 // Cuanto más avanzado el trámite, más se acerca al color de acento (dorado Corfo);
@@ -70,7 +70,7 @@ export default function Home() {
       {error && (
         <p className="vacio">
           No se pudo conectar con el backend ({error}). Revisa que <code>uvicorn app.main:app --reload</code> esté
-          corriendo en <code>http://127.0.0.1:8000</code>.
+          corriendo en <code>{BACKEND_URL}</code>.
         </p>
       )}
 
