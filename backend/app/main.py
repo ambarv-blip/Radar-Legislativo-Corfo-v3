@@ -1,0 +1,122 @@
+# -*- coding: utf-8 -*-
+"""
+backend/app/main.py
+=======================
+Observatorio Legislativo Estratégico Corfo — API backend (FastAPI).
+"""
+import sys
+import os
+import datetime
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # para importar monitor/ y ai/
+
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from typing import List
+
+from app.database import init_db, get_db, Proyecto, Evento
+from app import schemas
+from monitor.monitor_engine import ejecutar_monitoreo
+from ai.analysis import generar_analisis_placeholder
+
+app = FastAPI(title="Observatorio Legislativo Estratégico Corfo", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    # Para el MVP en desarrollo local se permite cualquier origen: evita que un cambio de
+    # puerto en Vite (5173, 5174, ...) rompa la conexión por CORS. Restringir antes de producción.
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+
+@app.get("/api/proyectos", response_model=List[schemas.ProyectoListOut])
+def listar_proyectos(db: Session = Depends(get_db)):
+    return db.query(Proyecto).order_by(Proyecto.id).all()
+
+
+@app.get("/api/proyectos/{proyecto_id}", response_model=schemas.ProyectoDetailOut)
+def ver_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
+    proyecto = db.query(Proyecto).filter(Proyecto.id == proyecto_id).first()
+    if not proyecto:
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    return proyecto
+
+
+@app.post("/api/proyectos/{proyecto_id}/actualizar", response_model=schemas.ActualizarResultado)
+def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
+    proyecto = db.query(Proyecto).filter(Proyecto.id == proyecto_id).first()
+    if not proyecto:
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+    resultado = ejecutar_monitoreo(proyecto.boletin, proyecto.estado_actual)
+    proyecto.fecha_ultima_revision = datetime.datetime.utcnow()
+
+    if resultado["resultado"] == "error_tecnico":
+        db.commit()
+        return schemas.ActualizarResultado(
+            resultado="error_tecnico",
+            mensaje=f"Error técnico de conexión con la fuente oficial: {resultado['error']}",
+            proyecto=proyecto,
+        )
+
+    if resultado["resultado"] == "sin_cambios":
+        db.commit()
+        return schemas.ActualizarResultado(
+            resultado="sin_cambios",
+            mensaje="No hubo cambios respecto del estado ya registrado.",
+            proyecto=proyecto,
+        )
+
+    # nuevo_evento
+    ultima = resultado.get("ultima_actuacion") or {}
+    nuevo_evento = Evento(
+        proyecto_id=proyecto.id,
+        fecha_evento=ultima.get("fecha"),
+        fecha_deteccion=datetime.datetime.utcnow(),
+        tipo_evento="Cambio de estado (detectado por el Observatorio)",
+        descripcion=ultima.get("sub_etapa") or "Sin descripción disponible",
+        estado_anterior=proyecto.estado_actual,
+        estado_nuevo=resultado["estado_oficial"],
+        fuente="camara.cl (consulta en vivo)",
+        enlace=resultado.get("url_consultada"),
+        nivel_alerta="Media",
+        estado_revision_humana="Pendiente",
+        observacion="Generado automáticamente al presionar 'Actualizar ahora'.",
+    )
+    db.add(nuevo_evento)
+    proyecto.estado_actual = resultado["estado_oficial"]
+    proyecto.ultimo_analisis_ia = generar_analisis_placeholder(proyecto.nombre, nuevo_evento.descripcion)
+    db.commit()
+    db.refresh(proyecto)
+
+    return schemas.ActualizarResultado(
+        resultado="nuevo_evento",
+        mensaje=f"Se detectó un nuevo evento: el estado cambió a \"{resultado['estado_oficial']}\".",
+        proyecto=proyecto,
+    )
+
+
+@app.post("/api/eventos", response_model=schemas.EventoOut)
+def registrar_evento(evento: schemas.EventoCreate, db: Session = Depends(get_db)):
+    proyecto = db.query(Proyecto).filter(Proyecto.id == evento.proyecto_id).first()
+    if not proyecto:
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    nuevo = Evento(**evento.dict(), fecha_deteccion=datetime.datetime.utcnow(),
+                   estado_revision_humana="Pendiente")
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return nuevo
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}

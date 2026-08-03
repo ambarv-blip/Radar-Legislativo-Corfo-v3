@@ -1,0 +1,369 @@
+:root {
+  --azul-corfo: #0b2a4a;
+  --azul-claro: #14507e;
+  --acento: #d98e2b;
+  --fondo: #f4f6f8;
+  --texto: #1c2733;
+  --texto-suave: #5b6b7a;
+  --borde: #dde3e8;
+  --critica: #b3261e;
+  --alta: #c96b1b;
+  --media: #2b6ab3;
+  --baja: #5f7386;
+  --informativa: #6b7a89;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header.topbar {
+  background: var(--azul-corfo);
+  color: white;
+  padding: 18px 32px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+
+header.topbar .marca {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+header.topbar .subtitulo {
+  font-size: 13px;
+  color: #b9cbdc;
+}
+
+main {
+  flex: 1;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 24px 60px;
+}
+
+.buscador {
+  margin-bottom: 20px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.buscador input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 10px 14px;
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.buscador select {
+  padding: 10px 12px;
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  font-size: 14px;
+  background: white;
+}
+
+.lista-proyectos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Tabla de proyectos (formato solicitado: Nombre | Boletín | Año | Estado) */
+.tabla-proyectos {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.tabla-proyectos thead th {
+  background: var(--azul-claro);
+  color: white;
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tabla-proyectos thead th:nth-child(3),
+.tabla-proyectos tbody td:nth-child(3) {
+  text-align: center;
+}
+
+.tabla-proyectos tbody tr:nth-child(even) { background: #eef1f4; }
+.tabla-proyectos tbody tr:nth-child(odd) { background: #f8f9fb; }
+.tabla-proyectos tbody tr:hover { background: #e3ecf4; }
+
+.tabla-proyectos td {
+  padding: 12px 16px;
+  font-size: 14px;
+  border-top: 1px solid var(--borde);
+  vertical-align: middle;
+}
+
+.boletin-celda { font-family: monospace; color: var(--texto-suave); }
+
+.link-boletin {
+  font-family: monospace;
+  color: var(--azul-claro);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--azul-claro);
+}
+.link-boletin:hover { color: var(--acento); border-bottom-color: var(--acento); }
+
+.link-proyecto {
+  color: var(--azul-corfo);
+  text-decoration: underline;
+  font-weight: 600;
+}
+.link-proyecto:hover { color: var(--acento); }
+
+/* Columna "Estado" — se actualiza periódicamente con el motor de monitoreo.
+   Badges sólidos (no tonos pálidos) para maximizar el contraste entre etapas.
+   Escala: gris (primer trámite) -> azul (segundo trámite) -> ámbar (tercer
+   trámite / control de constitucionalidad) -> verde (aprobación presidencial)
+   -> dorado institucional (ley publicada / tramitación terminada). */
+.estado-pill {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: white;
+}
+
+.estado-pill.estado-inicial { background: #5b6b7a; }        /* Primer trámite — gris pizarra */
+.estado-pill.estado-intermedio { background: #14507e; }      /* Segundo trámite — azul institucional */
+.estado-pill.estado-avanzado { background: #c96b1b; }        /* Tercer trámite / control TC — ámbar */
+.estado-pill.estado-presidencial { background: #2f7d4f; }    /* Aprobación presidencial — verde */
+.estado-pill.estado-terminado { background: #4a9d6f; }       /* Ley publicada — verde más claro */
+.estado-pill.estado-sin-info { background: #9aa5ae; }
+
+.tarjeta-proyecto {
+  background: white;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  text-decoration: none;
+  color: inherit;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.tarjeta-proyecto:hover {
+  box-shadow: 0 4px 14px rgba(11,42,74,0.12);
+  transform: translateY(-1px);
+}
+
+.tarjeta-proyecto .info h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--azul-corfo);
+}
+
+.tarjeta-proyecto .boletin {
+  font-size: 12px;
+  color: var(--texto-suave);
+  font-family: monospace;
+}
+
+.tarjeta-proyecto .estado {
+  font-size: 13px;
+  color: var(--texto-suave);
+  margin-top: 6px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: white;
+  white-space: nowrap;
+}
+
+.badge.critica { background: var(--critica); }
+.badge.alta { background: var(--alta); }
+.badge.media { background: var(--media); }
+.badge.baja { background: var(--baja); }
+.badge.informativa { background: var(--informativa); }
+
+.meta-derecha {
+  text-align: right;
+  min-width: 150px;
+}
+
+.meta-derecha .fecha {
+  font-size: 11px;
+  color: var(--texto-suave);
+  margin-top: 6px;
+}
+
+.volver {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: var(--azul-claro);
+  text-decoration: none;
+  font-size: 14px;
+}
+.volver:hover { text-decoration: underline; }
+
+.panel {
+  background: white;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.panel h1 {
+  margin: 0 0 4px;
+  color: var(--azul-corfo);
+  font-size: 22px;
+}
+
+.panel .boletin-detalle {
+  font-family: monospace;
+  color: var(--texto-suave);
+  margin-bottom: 14px;
+}
+
+.fila-detalle {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.campo {
+  flex: 1;
+  min-width: 220px;
+}
+
+.campo label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--texto-suave);
+  margin-bottom: 4px;
+}
+
+.campo p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.btn-actualizar {
+  background: var(--azul-claro);
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-actualizar:hover { background: var(--azul-corfo); }
+.btn-actualizar:disabled { background: #9fb3c4; cursor: not-allowed; }
+
+.resultado-actualizacion {
+  margin-top: 14px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.resultado-actualizacion.sin_cambios { background: #eef3f7; color: var(--texto); }
+.resultado-actualizacion.nuevo_evento { background: #fff4e5; color: #7a4a0d; }
+.resultado-actualizacion.error_tecnico { background: #fdeceb; color: #7a1f1a; }
+
+.linea-tiempo {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-left: 2px solid var(--borde);
+}
+
+.evento {
+  position: relative;
+  padding: 0 0 20px 22px;
+}
+
+.evento::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--azul-claro);
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px var(--borde);
+}
+
+.evento .fecha-evento {
+  font-size: 12px;
+  color: var(--texto-suave);
+  font-family: monospace;
+}
+
+.evento h4 {
+  margin: 2px 0 4px;
+  font-size: 14px;
+  color: var(--texto);
+}
+
+.evento p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--texto-suave);
+  line-height: 1.5;
+}
+
+.placeholder-ia {
+  font-style: italic;
+  color: var(--texto-suave);
+  font-size: 13px;
+  background: #f2f5f8;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px dashed var(--borde);
+}
+
+.vacio {
+  text-align: center;
+  color: var(--texto-suave);
+  padding: 40px 0;
+}

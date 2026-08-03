@@ -1,0 +1,2 @@
+# Ver backend/requirements.txt — se incluye aquí también por comodidad
+-r backend/requirements.txt
