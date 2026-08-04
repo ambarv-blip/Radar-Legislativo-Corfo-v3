@@ -7,8 +7,11 @@ Observatorio Legislativo Estratégico Corfo — API backend (FastAPI).
 import sys
 import os
 import datetime
+import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # para importar monitor/ y ai/
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
