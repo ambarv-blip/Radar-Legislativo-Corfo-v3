@@ -59,7 +59,8 @@ def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
     if not proyecto:
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
 
-    resultado = ejecutar_monitoreo(proyecto.boletin, proyecto.estado_actual)
+    ids_externos_existentes = {ev.id_externo for ev in proyecto.eventos if ev.id_externo}
+    resultado = ejecutar_monitoreo(proyecto.boletin, proyecto.estado_actual, ids_externos_existentes)
     proyecto.fecha_ultima_revision = datetime.datetime.utcnow()
 
     if resultado["resultado"] == "error_tecnico":
@@ -78,31 +79,36 @@ def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
             proyecto=proyecto,
         )
 
-    # nuevo_evento
-    ultima = resultado.get("ultima_actuacion") or {}
-    nuevo_evento = Evento(
-        proyecto_id=proyecto.id,
-        fecha_evento=ultima.get("fecha"),
-        fecha_deteccion=datetime.datetime.utcnow(),
-        tipo_evento="Cambio de estado (detectado por el Observatorio)",
-        descripcion=ultima.get("sub_etapa") or "Sin descripción disponible",
-        estado_anterior=proyecto.estado_actual,
-        estado_nuevo=resultado["estado_oficial"],
-        fuente=resultado.get("fuente") or "camara.cl (consulta en vivo)",
-        enlace=resultado.get("url_consultada"),
-        nivel_alerta="Media",
-        estado_revision_humana="Pendiente",
-        observacion="Generado automáticamente al presionar 'Actualizar ahora'.",
-    )
-    db.add(nuevo_evento)
-    proyecto.estado_actual = resultado["estado_oficial"]
-    proyecto.ultimo_analisis_ia = generar_analisis_placeholder(proyecto.nombre, nuevo_evento.descripcion)
+    # nuevo_evento: puede traer uno o varios eventos nuevos (votaciones + cambio de estado)
+    eventos_nuevos = resultado["eventos_nuevos"]
+    for datos_evento in eventos_nuevos:
+        db.add(Evento(
+            proyecto_id=proyecto.id,
+            fecha_deteccion=datetime.datetime.utcnow(),
+            estado_revision_humana="Pendiente",
+            observacion="Generado automáticamente al presionar 'Actualizar ahora'.",
+            **datos_evento,
+        ))
+
+    if resultado["estado_nuevo"]:
+        proyecto.estado_actual = resultado["estado_nuevo"]
+
+    ultima_descripcion = eventos_nuevos[-1]["descripcion"]
+    proyecto.ultimo_analisis_ia = generar_analisis_placeholder(proyecto.nombre, ultima_descripcion)
     db.commit()
     db.refresh(proyecto)
 
+    if resultado["estado_nuevo"]:
+        mensaje = (
+            f"Se detectaron {len(eventos_nuevos)} evento(s) nuevo(s): el estado cambió a "
+            f"\"{resultado['estado_nuevo']}\"."
+        )
+    else:
+        mensaje = f"Se detectaron {len(eventos_nuevos)} evento(s) nuevo(s) en el historial de tramitación."
+
     return schemas.ActualizarResultado(
         resultado="nuevo_evento",
-        mensaje=f"Se detectó un nuevo evento: el estado cambió a \"{resultado['estado_oficial']}\".",
+        mensaje=mensaje,
         proyecto=proyecto,
     )
 
