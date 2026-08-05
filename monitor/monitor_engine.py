@@ -18,19 +18,17 @@ no entrega un Estado utilizable, y queda registrado en logs y en el campo
 "fuente" del resultado cuál de las dos fue la que realmente respondió.
 Ver `consultar_fuente_oficial_scraper()` / sección "RESPALDO" más abajo.
 
-LIMITACIÓN DE VERIFICACIÓN (importante, léela antes de tocar el parser de
-Open Data): el entorno donde se escribió esta integración no tiene salida
-a internet hacia opendata.camara.cl (política de egress del sandbox, no un
-bloqueo del sitio), así que no fue posible obtener en vivo un ejemplo real
-de la respuesta de retornarProyectoLey. El nombre del método viene
-indicado por quien pidió este cambio; el parámetro y los nombres de campo
-están basados en la convención documentada de los servicios WSLegislativo/
-WSDiputado de la Cámara (prefijo "prm", catálogos con sub-nodo "Valor",
-etc.), pero no están 100% confirmados. Por eso `extraer_desde_open_data`
-es tolerante a variantes de nombre y registra el XML crudo cuando no
-reconoce los campos esperados — al probar contra el servicio real, revisa
-los logs si el resultado no es el esperado; puede ser cuestión de agregar
-un nombre de campo candidato, no de rehacer la integración.
+ESQUEMA REAL CONFIRMADO (boletín 16889-05, vía logs de diagnóstico contra
+el servicio real): retornarProyectoLey NO tiene un campo "Estado" directo.
+Devuelve un <ProyectoLey> con, entre otros, <Votaciones><VotacionProyectoLey>
+(una por cada votación registrada), cada una con <Fecha>, <Resultado>,
+<TramiteConstitucional> y <TramiteReglamentario>. El estado legislativo se
+infiere a partir de la votación más reciente — no hay otra señal de estado
+en la respuesta. Parámetro confirmado: prmNumeroBoletin. Namespace real:
+xmlns="http://opendata.camara.cl/camaradiputados/v1" (se ignora igual que
+cualquier otro namespace, ver _tag_local). El parser se mantiene tolerante
+a variantes de nombre por si el esquema cambia a futuro, pero ya no
+depende de suposiciones para los campos usados hoy.
 """
 import datetime
 import logging
@@ -75,10 +73,8 @@ def obtener_prm_id(boletin):
 OPEN_DATA_BASE_URL = "https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx"
 OPEN_DATA_METODO = "retornarProyectoLey"
 
-# Nombres de parámetro candidatos para el número de boletín. Se prueban en
-# orden hasta obtener una respuesta HTTP 200 con contenido; no se pudo
-# confirmar en vivo cuál es el correcto (ver nota del módulo).
-OPEN_DATA_PARAMS_CANDIDATOS = ["prmNumeroBoletin", "prmBoletin", "prmBOLETIN"]
+# Confirmado contra el servicio real (ver nota del módulo).
+OPEN_DATA_PARAM_BOLETIN = "prmNumeroBoletin"
 
 OPEN_DATA_HEADERS = {
     # Cliente honesto: esta es una llamada a un servicio HTTP público
@@ -119,10 +115,13 @@ def _buscar_elemento(raiz, *nombres_candidatos):
 
 
 def _texto_de(raiz, *nombres_candidatos):
-    """Como _buscar_elemento, pero devuelve el texto útil: el propio texto
-    del elemento, o si viene vacío, el de un sub-nodo típico de catálogo
-    (Valor/Descripcion/Nombre), como usan los servicios de la Cámara para
-    representar valores de listas (ej. <EstadoTramitacion><Valor>...))."""
+    """Como _buscar_elemento, pero devuelve el texto útil de la forma más
+    tolerante posible: el propio texto del elemento (así vienen los campos
+    reales de retornarProyectoLey, ej. <Resultado Valor="1">Aprobado</Resultado>
+    — "Aprobado" es el texto, Valor="1" es solo el código numérico y se
+    ignora); si el texto viene vacío, se prueba un sub-nodo típico de
+    catálogo (Valor/Descripcion/Nombre) y, como último recurso, un atributo
+    del mismo nombre — por si algún campo futuro solo trae el dato ahí."""
     el = _buscar_elemento(raiz, *nombres_candidatos)
     if el is None:
         return None
@@ -133,117 +132,168 @@ def _texto_de(raiz, *nombres_candidatos):
         if _tag_local(sub).lower() in ("valor", "descripcion", "nombre"):
             if sub.text and sub.text.strip():
                 return sub.text.strip()
+    for attr in ("Valor", "Descripcion", "Nombre"):
+        if el.get(attr):
+            return el.get(attr)
     return None
+
+
+# Mapea el texto real de <TramiteConstitucional> (ej. "Primer Trámite") al
+# formato ya usado en toda la app y reconocido por el frontend para
+# colorear el estado (ver estiloEstado() en frontend/src/pages/Home.jsx,
+# que busca substrings como "primer trámite" / "segundo trámite").
+# Si algún día aparece un trámite no listado aquí, se usa el texto tal cual
+# viene del servicio en vez de fallar (parser tolerante).
+TRAMITE_CONSTITUCIONAL_A_ESTADO = {
+    "primer trámite": "Primer trámite constitucional",
+    "segundo trámite": "Segundo trámite constitucional",
+    "tercer trámite": "Tercer trámite constitucional",
+}
+
+MESES_ES = {
+    1: "Ene.", 2: "Feb.", 3: "Mar.", 4: "Abr.", 5: "May.", 6: "Jun.",
+    7: "Jul.", 8: "Ago.", 9: "Sep.", 10: "Oct.", 11: "Nov.", 12: "Dic.",
+}
+
+
+def _formatear_fecha(fecha_iso):
+    """'2024-12-16T19:08:42' -> '16 Dic. 2024' (mismo estilo que usaban los
+    eventos migrados del scraper). Si no se puede interpretar, se devuelve
+    el valor original tal cual — mejor mostrar algo que perder el dato."""
+    if not fecha_iso:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(fecha_iso)
+    except ValueError:
+        return fecha_iso
+    return f"{dt.day} {MESES_ES.get(dt.month, dt.strftime('%b'))} {dt.year}"
+
+
+def _normalizar_tramite_constitucional(texto):
+    if not texto:
+        return None
+    return TRAMITE_CONSTITUCIONAL_A_ESTADO.get(texto.strip().lower(), texto.strip())
 
 
 def consultar_open_data(boletin):
     """Consulta retornarProyectoLey en el servicio oficial WSLegislativo.
 
-    Prueba los nombres de parámetro candidatos en orden hasta obtener un
-    HTTP 200 con cuerpo no vacío. No reintenta ante error de red más que
-    una vez por candidato (INTENTOS_MAX), igual que el respaldo HTML.
+    Reintenta ante error transitorio (timeout, error de conexión, HTTP no-200)
+    hasta INTENTOS_MAX veces.
     """
-    for nombre_param in OPEN_DATA_PARAMS_CANDIDATOS:
-        url = f"{OPEN_DATA_BASE_URL}/{OPEN_DATA_METODO}"
-        params = {nombre_param: boletin}
-        ultimo_error = None
-        ultimo_status = None
+    url = f"{OPEN_DATA_BASE_URL}/{OPEN_DATA_METODO}"
+    params = {OPEN_DATA_PARAM_BOLETIN: boletin}
+    ultimo_error = None
+    ultimo_status = None
 
-        for intento in range(1, INTENTOS_MAX + 1):
-            logger.info(
-                "Consultando Open Data oficial (%s, param=%s, boletín=%s, intento=%d/%d)",
-                OPEN_DATA_METODO, nombre_param, boletin, intento, INTENTOS_MAX,
-            )
-            try:
-                resp = requests.get(url, params=params, headers=OPEN_DATA_HEADERS, timeout=TIMEOUT)
-            except requests.Timeout as e:
-                ultimo_error = f"Timeout tras {TIMEOUT}s consultando Open Data"
-                logger.warning("Timeout consultando Open Data (intento %d/%d): %s", intento, INTENTOS_MAX, e)
-            except requests.RequestException as e:
-                ultimo_error = f"Error de conexión con Open Data: {str(e)[:300]}"
-                logger.warning("Error de conexión consultando Open Data (intento %d/%d): %s", intento, INTENTOS_MAX, e)
-            else:
-                ultimo_status = resp.status_code
-                logger.info("Open Data respondió HTTP %s desde %s", resp.status_code, resp.url)
-                if resp.status_code == 200 and resp.content:
-                    # Diagnóstico completo de la respuesta real, sin truncar, para poder
-                    # ajustar el parser a los nombres de campo reales de retornarProyectoLey
-                    # (ver nota del módulo) y para que se pueda copiar directo de la consola
-                    # de uvicorn si hace falta enviarlo para revisión.
-                    logger.info(
-                        "=== DIAGNÓSTICO Open Data — boletín=%s ===\n"
-                        "URL consultada: %s\n"
-                        "Código HTTP: %s\n"
-                        "XML completo:\n%s\n"
-                        "=== FIN DIAGNÓSTICO ===",
-                        boletin, resp.url, resp.status_code, resp.text,
-                    )
-                    return {
-                        "exito": True, "codigo_http": 200, "url_consultada": resp.url,
-                        "contenido": resp.content, "param_usado": nombre_param, "error": None,
-                    }
-                ultimo_error = f"HTTP {resp.status_code} de Open Data"
-                if resp.status_code == 403 and resp.text:
-                    logger.warning("Cuerpo del 403 de Open Data (primeros 500 chars): %s", resp.text[:500])
-                # 500/400 típicamente significa "nombre de parámetro incorrecto" en ASMX:
-                # no tiene sentido reintentar con el mismo, se prueba el siguiente candidato.
-                if resp.status_code in (400, 500):
-                    break
+    for intento in range(1, INTENTOS_MAX + 1):
+        logger.info(
+            "Consultando Open Data oficial (%s, boletín=%s, intento=%d/%d)",
+            OPEN_DATA_METODO, boletin, intento, INTENTOS_MAX,
+        )
+        try:
+            resp = requests.get(url, params=params, headers=OPEN_DATA_HEADERS, timeout=TIMEOUT)
+        except requests.Timeout as e:
+            ultimo_error = f"Timeout tras {TIMEOUT}s consultando Open Data"
+            logger.warning("Timeout consultando Open Data (intento %d/%d): %s", intento, INTENTOS_MAX, e)
+        except requests.RequestException as e:
+            ultimo_error = f"Error de conexión con Open Data: {str(e)[:300]}"
+            logger.warning("Error de conexión consultando Open Data (intento %d/%d): %s", intento, INTENTOS_MAX, e)
+        else:
+            ultimo_status = resp.status_code
+            logger.info("Open Data respondió HTTP %s desde %s", resp.status_code, resp.url)
+            if resp.status_code == 200 and resp.content:
+                # Diagnóstico detallado (XML completo) disponible en DEBUG por si hace
+                # falta reabrirlo ante un cambio de esquema futuro; ya no se emite en
+                # INFO por defecto, el esquema real quedó confirmado y documentado.
+                logger.debug(
+                    "Open Data — respuesta 200 boletín=%s — URL: %s — XML: %s",
+                    boletin, resp.url, resp.text,
+                )
+                return {
+                    "exito": True, "codigo_http": 200, "url_consultada": resp.url,
+                    "contenido": resp.content, "error": None,
+                }
+            ultimo_error = f"HTTP {resp.status_code} de Open Data"
+            if resp.status_code == 403 and resp.text:
+                logger.warning("Cuerpo del 403 de Open Data (primeros 500 chars): %s", resp.text[:500])
 
-            if intento < INTENTOS_MAX:
-                time.sleep(ESPERA_ENTRE_INTENTOS * intento)
-
-        logger.warning("Candidato de parámetro '%s' no funcionó para Open Data: %s", nombre_param, ultimo_error)
+        if intento < INTENTOS_MAX:
+            time.sleep(ESPERA_ENTRE_INTENTOS * intento)
 
     return {
         "exito": False, "codigo_http": ultimo_status,
-        "url_consultada": f"{OPEN_DATA_BASE_URL}/{OPEN_DATA_METODO}",
-        "contenido": None, "param_usado": None, "error": ultimo_error,
+        "url_consultada": url, "contenido": None, "error": ultimo_error,
     }
 
 
 def extraer_desde_open_data(contenido_xml, boletin):
     """Mapea la respuesta XML de retornarProyectoLey al mismo formato
     interno que produce el respaldo HTML: {estado_oficial, ultima_actuacion}.
-    Devuelve None si no logra reconocer ningún campo esperado (ver nota de
-    verificación al inicio del módulo).
+
+    Esquema real (confirmado, ver nota al inicio del módulo): no existe un
+    campo "Estado" directo. <ProyectoLey><Votaciones> trae cero o más
+    <VotacionProyectoLey>, cada una con <Fecha>, <Resultado>,
+    <TramiteConstitucional> y <TramiteReglamentario>. Se toma la votación
+    con la <Fecha> más reciente (comparación de string ISO 8601, que ordena
+    igual que la fecha real) como referencia del estado actual, tal como no
+    hay otra señal de estado en la respuesta del servicio.
+
+    Devuelve None si el proyecto no tiene votaciones registradas todavía
+    (recién ingresado) o si, ante un cambio de esquema futuro, no se logra
+    reconocer TramiteConstitucional — en ambos casos el llamador debe caer
+    al respaldo en vez de guardar un estado vacío.
 
     Manejo de namespaces: ElementTree representa un tag con namespace como
-    '{http://tempuri.org/}NombreTag' (notación de Clark). _tag_local() lo
-    reduce a 'NombreTag' quitando el prefijo '{...}', así que _buscar_elemento
-    / _texto_de funcionan igual haya o no namespace y sea cual sea su URI —
-    no hace falta declarar el namespace específico del WSDL."""
+    '{http://opendata.camara.cl/camaradiputados/v1}NombreTag' (notación de
+    Clark). _tag_local() lo reduce a 'NombreTag' quitando el prefijo
+    '{...}', así que toda la búsqueda de nodos es namespace-agnóstica."""
     try:
         raiz = ET.fromstring(contenido_xml)
     except ET.ParseError as e:
         logger.error("XML de Open Data no válido para boletín %s: %s", boletin, e)
         return None
 
-    logger.info("Open Data — nodos XML encontrados para boletín %s: %s", boletin, _listar_nodos(raiz))
+    logger.debug("Open Data — nodos XML encontrados para boletín %s: %s", boletin, _listar_nodos(raiz))
 
-    estado = _texto_de(raiz, "EstadoTramitacion", "SituacionActual", "Estado")
-
-    ultima_actuacion = None
-    tramites = [el for el in raiz.iter() if _tag_local(el).lower() in ("tramite", "tramitecamara", "tramitesenado")]
-    if tramites:
-        ultimo = tramites[-1]
-        ultima_actuacion = {
-            "fecha": _texto_de(ultimo, "Fecha"),
-            "sesion": _texto_de(ultimo, "Sesion", "NumeroSesion"),
-            "etapa": _texto_de(ultimo, "Etapa", "EtapaTramitacion") or estado,
-            "sub_etapa": _texto_de(ultimo, "Descripcion", "SubEtapa", "Detalle"),
-        }
-
-    if estado is None and ultima_actuacion is None:
+    votaciones = [el for el in raiz.iter() if _tag_local(el).lower() == "votacionproyectoley"]
+    if not votaciones:
         logger.warning(
-            "Open Data respondió pero no se reconoció ningún campo esperado para boletín %s "
-            "(ver el bloque '=== DIAGNÓSTICO Open Data ===' y la lista de nodos justo arriba "
-            "en este log para ajustar los nombres candidatos en extraer_desde_open_data).",
-            boletin,
+            "Open Data respondió pero el boletín %s no tiene votaciones registradas "
+            "(proyecto recién ingresado, sin votación aún, o cambio de esquema).", boletin,
         )
         return None
 
-    return {"estado_oficial": estado, "ultima_actuacion": ultima_actuacion}
+    ultima_votacion = max(votaciones, key=lambda v: _texto_de(v, "Fecha") or "")
+
+    fecha_iso = _texto_de(ultima_votacion, "Fecha")
+    resultado_voto = _texto_de(ultima_votacion, "Resultado")
+    tramite_constitucional_raw = _texto_de(ultima_votacion, "TramiteConstitucional")
+    tramite_reglamentario = _texto_de(ultima_votacion, "TramiteReglamentario")
+
+    tramite_constitucional = _normalizar_tramite_constitucional(tramite_constitucional_raw)
+    if tramite_constitucional is None:
+        logger.warning(
+            "Open Data respondió con votaciones pero sin TramiteConstitucional reconocible "
+            "para boletín %s (cambio de esquema).", boletin,
+        )
+        return None
+
+    detalle = [p for p in (tramite_reglamentario, resultado_voto) if p]
+    estado_oficial = f"{tramite_constitucional} — {' / '.join(detalle)}" if detalle else tramite_constitucional
+
+    ultima_actuacion = {
+        "fecha": _formatear_fecha(fecha_iso) or fecha_iso,
+        "sesion": None,  # no existe un número de sesión en este esquema
+        "etapa": tramite_constitucional,
+        "sub_etapa": f"{tramite_reglamentario or 'Trámite reglamentario no informado'}"
+                     f" — Resultado: {resultado_voto or 'no informado'}",
+        "resultado": resultado_voto,
+        "tramite_constitucional": tramite_constitucional_raw,
+        "tramite_reglamentario": tramite_reglamentario,
+    }
+
+    return {"estado_oficial": estado_oficial, "ultima_actuacion": ultima_actuacion}
 
 
 # =====================================================================
@@ -373,13 +423,12 @@ def extraer_ultima_actuacion(html):
 # Orquestación: Open Data primero, respaldo HTML solo si hace falta
 # =====================================================================
 
-# Desactivado TEMPORALMENTE mientras se confirma el esquema real del XML de
-# retornarProyectoLey: así el error que ve el usuario refleja solo lo que
-# pasó con Open Data (sin mezclarlo con un segundo error del respaldo HTML,
-# que solo agregaba ruido al diagnóstico). El código del respaldo sigue
-# intacto — cuando el parser de Open Data esté confirmado contra el XML
-# real, volver a poner esto en True para recuperar el respaldo HTML.
-HABILITAR_RESPALDO_HTML = False
+# El esquema real de Open Data ya está confirmado y el parser ajustado a él
+# (ver nota al inicio del módulo), así que el respaldo HTML vuelve a estar
+# habilitado como lo que siempre debió ser: un mecanismo de contingencia,
+# no la fuente principal. Solo se usa si Datos Abiertos falla de verdad
+# (caído, timeout) o responde sin votaciones utilizables.
+HABILITAR_RESPALDO_HTML = True
 
 
 def _comparar_y_construir(estado_oficial, ultima_actuacion, estado_actual_guardado, url_consultada, fuente):
@@ -431,14 +480,13 @@ def ejecutar_monitoreo(boletin, estado_actual_guardado):
     if not HABILITAR_RESPALDO_HTML:
         return {
             "resultado": "error_tecnico",
-            "error": f"Datos Abiertos falló ({error_open_data}). Respaldo HTML desactivado temporalmente "
-                     f"mientras se confirma el esquema de Open Data (HABILITAR_RESPALDO_HTML=False en "
-                     f"monitor_engine.py).",
+            "error": f"Datos Abiertos falló ({error_open_data}). Respaldo HTML desactivado "
+                     f"(HABILITAR_RESPALDO_HTML=False en monitor_engine.py).",
             "estado_oficial": None, "ultima_actuacion": None,
             "url_consultada": od["url_consultada"], "fuente": None,
         }
 
-    logger.warning("Se prueba el respaldo HTML para boletín %s.", boletin)
+    logger.warning("Open Data no entregó un resultado utilizable para boletín %s; se usa el respaldo HTML.", boletin)
 
     # 2) Respaldo: scraping del HTML público (solo si Open Data falló y está habilitado)
     prm_id = obtener_prm_id(boletin)
