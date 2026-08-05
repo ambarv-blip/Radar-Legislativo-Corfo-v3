@@ -48,6 +48,7 @@ por no poder verificarlas en vivo desde este entorno — ver más abajo):
 import datetime
 import logging
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 
@@ -101,39 +102,143 @@ SCRAPER_HEADERS = {
 }
 
 
-def _nueva_sesion_scraper():
-    """Crea una sesión de requests y la 'calienta' visitando el listado de
-    proyectos, igual que un navegador real que llega a la ficha de
-    tramitación navegando desde el buscador. Esto entrega cookies de
-    sesión/WAF y un Referer legítimo para el siguiente pedido."""
-    session = requests.Session()
-    session.headers.update(SCRAPER_HEADERS)
-    try:
-        session.get(LISTADO_URL, timeout=TIMEOUT)
-    except requests.RequestException as e:
-        # No es fatal: seguimos con la sesión sin cookies previas.
-        logger.warning("No se pudo precargar cookies desde %s: %s", LISTADO_URL, e)
-    return session
+class _ClienteHtmlCamara:
+    """Encapsula la sesión HTTP reutilizable hacia camara.cl (HTML).
+
+    Aislado a propósito del resto del adaptador — solo sabe crear,
+    entregar e invalidar una sesión "calentada" — para poder evolucionar
+    más adelante hacia un gestor de clientes HTTP compartido entre varias
+    fuentes (uno por FuenteOficial) sin tener que tocar la lógica de
+    consultar_fuente_oficial_scraper(). Por ahora es un singleton simple a
+    nivel de módulo (ver `_cliente_html` más abajo), no una variable suelta
+    manipulada directamente desde la función de consulta.
+    """
+
+    def __init__(self):
+        self._session = None
+        self._lock = threading.Lock()
+
+    def obtener_sesion(self):
+        """Devuelve la sesión activa, creándola (y 'calentándola') si es la
+        primera vez o si fue invalidada."""
+        with self._lock:
+            if self._session is None:
+                self._session = self._crear_sesion()
+            return self._session
+
+    def invalidar(self):
+        """Descarta la sesión actual. La próxima llamada a obtener_sesion()
+        crea una nueva desde cero (con su propio calentamiento) — se usa
+        cuando el circuito se abre, para no reintentar más adelante con
+        cookies posiblemente asociadas al bloqueo."""
+        with self._lock:
+            self._session = None
+
+    @staticmethod
+    def _crear_sesion():
+        """'Calienta' la sesión visitando el listado de proyectos, igual
+        que un navegador real que llega a la ficha de tramitación
+        navegando desde el buscador. Esto entrega cookies de sesión/WAF y
+        un Referer legítimo para los pedidos siguientes."""
+        session = requests.Session()
+        session.headers.update(SCRAPER_HEADERS)
+        try:
+            session.get(LISTADO_URL, timeout=TIMEOUT)
+        except requests.RequestException as e:
+            # No es fatal: seguimos con la sesión sin cookies previas.
+            logger.warning("No se pudo precargar cookies desde %s: %s", LISTADO_URL, e)
+        return session
+
+
+_cliente_html = _ClienteHtmlCamara()
+
+
+class EstadoCircuito:
+    """Circuit breaker de una fuente. Hoy vive en memoria del proceso
+    (se reinicia si se reinicia uvicorn) — los nombres de los campos se
+    eligen pensando en que más adelante puedan mapear 1:1 a columnas de
+    una futura entidad FuenteOficial (fallos_consecutivos, abierto_desde,
+    ultima_consulta_exitosa) para persistir este mismo estado sin cambiar
+    la lógica que lo usa, solo el lugar donde vive.
+    """
+
+    def __init__(self, nombre_fuente, umbral_fallos=3, cooldown_segundos=900):
+        self.nombre_fuente = nombre_fuente
+        self.umbral_fallos = umbral_fallos
+        self.cooldown_segundos = cooldown_segundos
+        self.fallos_consecutivos = 0
+        self.abierto_desde = None  # datetime | None
+        self.ultima_consulta_exitosa = None  # datetime | None
+
+    def esta_abierto(self):
+        if self.abierto_desde is None:
+            return False
+        transcurrido = (datetime.datetime.utcnow() - self.abierto_desde).total_seconds()
+        return transcurrido < self.cooldown_segundos
+
+    def registrar_exito(self):
+        if self.fallos_consecutivos or self.abierto_desde:
+            logger.info("Circuito de %s: recuperado, circuito cerrado.", self.nombre_fuente)
+        self.fallos_consecutivos = 0
+        self.abierto_desde = None
+        self.ultima_consulta_exitosa = datetime.datetime.utcnow()
+
+    def registrar_fallo_bloqueo(self):
+        """Registra un fallo tipo bloqueo (403). Devuelve True si este
+        fallo fue el que recién abrió el circuito (para que el llamador
+        pueda, por ejemplo, invalidar la sesión asociada)."""
+        self.fallos_consecutivos += 1
+        if self.fallos_consecutivos >= self.umbral_fallos and self.abierto_desde is None:
+            self.abierto_desde = datetime.datetime.utcnow()
+            logger.error(
+                "Circuito de %s ABIERTO tras %d bloqueo(s) 403 consecutivo(s). "
+                "Se omitirá esta fuente por %ds (fuente marcada como degradada).",
+                self.nombre_fuente, self.fallos_consecutivos, self.cooldown_segundos,
+            )
+            return True
+        return False
+
+
+_circuito_html = EstadoCircuito("camara.cl (HTML)", umbral_fallos=3, cooldown_segundos=900)
 
 
 def consultar_fuente_oficial_scraper(boletin, prm_id):
     """Consulta la ficha de tramitación de un boletín en camara.cl (HTML).
 
-    Reintenta ante errores transitorios (timeout, error de conexión, 403 —
-    que a veces se resuelve renovando cookies de sesión) hasta
-    INTENTOS_MAX veces. No reintenta ante 404, ya que un boletín/prmID
-    inválido no se arregla reintentando.
+    Reintenta ante errores transitorios (timeout, error de conexión) hasta
+    INTENTOS_MAX veces. NO reintenta ante 403 ni 404: un bloqueo tipo WAF
+    no se resuelve en los pocos segundos de un reintento inmediato (según
+    evidencia real de producción), y un boletín/prmID inválido tampoco se
+    arregla reintentando.
+
+    Si el circuito de esta fuente está abierto (varios 403 consecutivos
+    recientes), la consulta se omite por completo — la fuente queda
+    marcada como degradada temporalmente, pero esta función nunca lanza
+    excepción ni bloquea al llamador: sigue devolviendo la misma forma de
+    resultado de siempre con exito=False.
     """
     if prm_id is None:
         return {"exito": False, "codigo_http": None, "url_consultada": TRAMITACION_URL,
                 "texto": None, "error": f"No hay prmID conocido para boletín {boletin}"}
 
+    if _circuito_html.esta_abierto():
+        logger.warning(
+            "camara.cl (HTML) marcado como degradado (circuito abierto) — se omite la "
+            "consulta para boletín %s.", boletin,
+        )
+        return {
+            "exito": False, "codigo_http": None, "url_consultada": TRAMITACION_URL,
+            "texto": None,
+            "error": "camara.cl (HTML) está temporalmente marcado como degradado tras "
+                     "bloqueos 403 repetidos; se omite esta consulta.",
+        }
+
     params = {"prmID": prm_id, "prmBOLETIN": boletin}
+    session = _cliente_html.obtener_sesion()
     ultimo_error = None
     ultimo_status = None
 
     for intento in range(1, INTENTOS_MAX + 1):
-        session = _nueva_sesion_scraper()
         logger.info(
             "Consultando estado en camara.cl (boletín=%s, prmID=%s, intento=%d/%d): %s",
             boletin, prm_id, intento, INTENTOS_MAX, TRAMITACION_URL,
@@ -160,6 +265,7 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
             logger.info("camara.cl respondió HTTP %s desde %s", resp.status_code, resp.url)
 
             if resp.status_code == 200:
+                _circuito_html.registrar_exito()
                 return {
                     "exito": True, "codigo_http": 200, "url_consultada": resp.url,
                     "texto": resp.text, "error": None,
@@ -169,6 +275,9 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
                 logger.warning("Bloqueo 403 en intento %d/%d para boletín %s", intento, INTENTOS_MAX, boletin)
                 if resp.text:
                     logger.warning("Cuerpo de la respuesta 403 (primeros 500 chars): %s", resp.text[:500])
+                if _circuito_html.registrar_fallo_bloqueo():
+                    _cliente_html.invalidar()
+                break  # un 403 no se arregla reintentando de inmediato
             elif resp.status_code == 404:
                 ultimo_error = "HTTP 404 — no se encontró la ficha de tramitación (revisar prmID/boletín)"
                 logger.warning("404 en intento %d/%d para boletín %s (prmID=%s)", intento, INTENTOS_MAX, boletin, prm_id)
