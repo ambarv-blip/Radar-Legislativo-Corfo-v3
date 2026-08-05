@@ -29,7 +29,12 @@ class Proyecto(Base):
     fecha_ultima_revision = Column(DateTime)
     ultimo_analisis_ia = Column(Text)  # placeholder para el futuro análisis IA
 
-    eventos = relationship("Evento", back_populates="proyecto", order_by="desc(Evento.fecha_evento)")
+    # Ordenado por fecha_deteccion (DateTime real, siempre poblada por el sistema al
+    # detectar el evento) y no por fecha_evento (texto libre de formato variable según
+    # la fuente: "31 May. 2024", "16 Dic. 2024", ...) — ordenar por ese string hacía una
+    # comparación alfabética, no cronológica, y un evento recién detectado podía terminar
+    # enterrado entre eventos antiguos en vez de aparecer primero en el historial.
+    eventos = relationship("Evento", back_populates="proyecto", order_by="desc(Evento.fecha_deteccion)")
 
 
 class Evento(Base):
