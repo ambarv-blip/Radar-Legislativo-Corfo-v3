@@ -53,6 +53,12 @@ class Evento(Base):
     nivel_alerta = Column(String)
     estado_revision_humana = Column(String, default="Pendiente")
     observacion = Column(Text)
+    # Clave estable de deduplicación contra la fuente oficial (ej. "od-votacion-42178"
+    # usando el <Id> real de una VotacionProyectoLey de Open Data, o una clave compuesta
+    # para filas del HTML). Permite que el motor de monitoreo sepa con certeza qué
+    # actuaciones ya están en el timeline y cuáles son realmente nuevas, sin comparar
+    # texto. Nula para eventos históricos migrados antes de que existiera este campo.
+    id_externo = Column(String, index=True)
 
     proyecto = relationship("Proyecto", back_populates="eventos")
 
@@ -60,6 +66,19 @@ class Evento(Base):
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    _migrar_columnas_faltantes()
+
+
+def _migrar_columnas_faltantes():
+    """Migración liviana para bases de datos SQLite creadas antes de agregar
+    columnas nuevas al modelo. Base.metadata.create_all() solo crea tablas
+    que no existen — no altera tablas ya existentes — así que hace falta
+    este paso manual para que id_externo aparezca en instalaciones previas."""
+    with engine.connect() as conn:
+        columnas = {fila[1] for fila in conn.exec_driver_sql("PRAGMA table_info(eventos)")}
+        if "id_externo" not in columnas:
+            conn.exec_driver_sql("ALTER TABLE eventos ADD COLUMN id_externo VARCHAR")
+            conn.commit()
 
 
 def get_db():
