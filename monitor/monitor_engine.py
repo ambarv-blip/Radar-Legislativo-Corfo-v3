@@ -93,6 +93,19 @@ def _tag_local(elemento):
     return elemento.tag.rsplit("}", 1)[-1]
 
 
+def _listar_nodos(raiz):
+    """Lista, sin duplicados y en orden de aparición, los nombres locales de
+    todos los nodos del XML — para ver de un vistazo el esquema real que
+    devuelve retornarProyectoLey (independiente de namespaces, ver nota de
+    extraer_desde_open_data)."""
+    vistos = []
+    for el in raiz.iter():
+        nombre = _tag_local(el)
+        if nombre not in vistos:
+            vistos.append(nombre)
+    return vistos
+
+
 def _buscar_elemento(raiz, *nombres_candidatos):
     """Busca en todo el árbol el primer elemento cuyo nombre local (sin
     namespace) coincida, sin distinguir mayúsculas, con alguno de los
@@ -153,6 +166,18 @@ def consultar_open_data(boletin):
                 ultimo_status = resp.status_code
                 logger.info("Open Data respondió HTTP %s desde %s", resp.status_code, resp.url)
                 if resp.status_code == 200 and resp.content:
+                    # Diagnóstico completo de la respuesta real, sin truncar, para poder
+                    # ajustar el parser a los nombres de campo reales de retornarProyectoLey
+                    # (ver nota del módulo) y para que se pueda copiar directo de la consola
+                    # de uvicorn si hace falta enviarlo para revisión.
+                    logger.info(
+                        "=== DIAGNÓSTICO Open Data — boletín=%s ===\n"
+                        "URL consultada: %s\n"
+                        "Código HTTP: %s\n"
+                        "XML completo:\n%s\n"
+                        "=== FIN DIAGNÓSTICO ===",
+                        boletin, resp.url, resp.status_code, resp.text,
+                    )
                     return {
                         "exito": True, "codigo_http": 200, "url_consultada": resp.url,
                         "contenido": resp.content, "param_usado": nombre_param, "error": None,
@@ -181,12 +206,20 @@ def extraer_desde_open_data(contenido_xml, boletin):
     """Mapea la respuesta XML de retornarProyectoLey al mismo formato
     interno que produce el respaldo HTML: {estado_oficial, ultima_actuacion}.
     Devuelve None si no logra reconocer ningún campo esperado (ver nota de
-    verificación al inicio del módulo)."""
+    verificación al inicio del módulo).
+
+    Manejo de namespaces: ElementTree representa un tag con namespace como
+    '{http://tempuri.org/}NombreTag' (notación de Clark). _tag_local() lo
+    reduce a 'NombreTag' quitando el prefijo '{...}', así que _buscar_elemento
+    / _texto_de funcionan igual haya o no namespace y sea cual sea su URI —
+    no hace falta declarar el namespace específico del WSDL."""
     try:
         raiz = ET.fromstring(contenido_xml)
     except ET.ParseError as e:
         logger.error("XML de Open Data no válido para boletín %s: %s", boletin, e)
         return None
+
+    logger.info("Open Data — nodos XML encontrados para boletín %s: %s", boletin, _listar_nodos(raiz))
 
     estado = _texto_de(raiz, "EstadoTramitacion", "SituacionActual", "Estado")
 
@@ -203,10 +236,10 @@ def extraer_desde_open_data(contenido_xml, boletin):
 
     if estado is None and ultima_actuacion is None:
         logger.warning(
-            "Open Data respondió pero no se reconoció ningún campo esperado para boletín %s. "
-            "XML crudo (primeros 800 chars) — usar esto para ajustar los nombres candidatos "
-            "en extraer_desde_open_data: %s",
-            boletin, ET.tostring(raiz, encoding="unicode")[:800],
+            "Open Data respondió pero no se reconoció ningún campo esperado para boletín %s "
+            "(ver el bloque '=== DIAGNÓSTICO Open Data ===' y la lista de nodos justo arriba "
+            "en este log para ajustar los nombres candidatos en extraer_desde_open_data).",
+            boletin,
         )
         return None
 
@@ -340,6 +373,15 @@ def extraer_ultima_actuacion(html):
 # Orquestación: Open Data primero, respaldo HTML solo si hace falta
 # =====================================================================
 
+# Desactivado TEMPORALMENTE mientras se confirma el esquema real del XML de
+# retornarProyectoLey: así el error que ve el usuario refleja solo lo que
+# pasó con Open Data (sin mezclarlo con un segundo error del respaldo HTML,
+# que solo agregaba ruido al diagnóstico). El código del respaldo sigue
+# intacto — cuando el parser de Open Data esté confirmado contra el XML
+# real, volver a poner esto en True para recuperar el respaldo HTML.
+HABILITAR_RESPALDO_HTML = False
+
+
 def _comparar_y_construir(estado_oficial, ultima_actuacion, estado_actual_guardado, url_consultada, fuente):
     if (estado_actual_guardado or "").strip() == (estado_oficial or "").strip():
         resultado = "sin_cambios"
@@ -380,18 +422,25 @@ def ejecutar_monitoreo(boletin, estado_actual_guardado):
                 od["url_consultada"],
                 fuente="Datos Abiertos oficiales — Cámara de Diputadas y Diputados (WSLegislativo.retornarProyectoLey)",
             )
-        logger.warning(
-            "Open Data respondió pero no entregó un Estado utilizable para boletín %s; se prueba el respaldo HTML.",
-            boletin,
-        )
+        logger.warning("Open Data respondió pero no entregó un Estado utilizable para boletín %s.", boletin)
         error_open_data = "Open Data respondió pero no se pudo interpretar el Estado del proyecto"
     else:
-        logger.warning(
-            "Open Data no disponible para boletín %s (%s); se prueba el respaldo HTML.", boletin, od["error"],
-        )
+        logger.warning("Open Data no disponible para boletín %s (%s).", boletin, od["error"])
         error_open_data = od["error"]
 
-    # 2) Respaldo: scraping del HTML público (solo si Open Data falló)
+    if not HABILITAR_RESPALDO_HTML:
+        return {
+            "resultado": "error_tecnico",
+            "error": f"Datos Abiertos falló ({error_open_data}). Respaldo HTML desactivado temporalmente "
+                     f"mientras se confirma el esquema de Open Data (HABILITAR_RESPALDO_HTML=False en "
+                     f"monitor_engine.py).",
+            "estado_oficial": None, "ultima_actuacion": None,
+            "url_consultada": od["url_consultada"], "fuente": None,
+        }
+
+    logger.warning("Se prueba el respaldo HTML para boletín %s.", boletin)
+
+    # 2) Respaldo: scraping del HTML público (solo si Open Data falló y está habilitado)
     prm_id = obtener_prm_id(boletin)
     if prm_id is None:
         return {
