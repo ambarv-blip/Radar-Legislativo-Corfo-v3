@@ -38,7 +38,7 @@ export default function Home() {
   useEffect(() => {
     listarProyectos()
       .then(setProyectos)
-      .catch((e) => setError(e.message))
+      .catch((e) => setError({ tipo: e.tipo || "conexion", mensaje: e.message }))
       .finally(() => setCargando(false));
   }, []);
 
@@ -47,15 +47,29 @@ export default function Home() {
   // endpoint de actualización masiva en el backend, así que se consulta la
   // fuente oficial de cada proyecto monitoreado, uno a la vez, y al final
   // se recarga el listado completo desde el backend.
+  //
+  // El backend responde HTTP 200 incluso cuando la consulta a la fuente
+  // oficial falló (resultado === "error_tecnico" — ver
+  // backend/app/main.py): actualizarProyecto() no lanza excepción en ese
+  // caso, así que un fallo de negocio no se puede detectar solo con
+  // try/catch. Hay que revisar el campo `resultado` de cada respuesta.
   async function handleActualizarTodos() {
     setActualizando(true);
     setEstadoActualizacion(null);
-    let errores = 0;
+    let exitosos = 0;
+    let fallidos = 0;
     for (const p of proyectos) {
       try {
-        await actualizarProyecto(p.id);
+        const r = await actualizarProyecto(p.id);
+        if (r.resultado === "error_tecnico") {
+          fallidos += 1;
+        } else {
+          exitosos += 1;
+        }
       } catch {
-        errores += 1;
+        // Fallo real de conexión/API con ese proyecto puntual (no solo un
+        // "error_tecnico" de negocio) — igualmente cuenta como fallido.
+        fallidos += 1;
       }
     }
     try {
@@ -65,14 +79,17 @@ export default function Home() {
       setActualizando(false);
       return;
     }
-    setEstadoActualizacion(
-      errores > 0
-        ? {
-            tipo: "error_tecnico",
-            mensaje: `Actualización completada con errores (${errores} de ${proyectos.length} proyectos no se pudieron actualizar).`,
-          }
-        : { tipo: "sin_cambios", mensaje: "Actualización completada" }
-    );
+
+    if (fallidos === 0) {
+      setEstadoActualizacion({ tipo: "sin_cambios", mensaje: "Actualización completada correctamente" });
+    } else if (exitosos === 0) {
+      setEstadoActualizacion({ tipo: "error_tecnico", mensaje: "No fue posible actualizar los proyectos" });
+    } else {
+      setEstadoActualizacion({
+        tipo: "nuevo_evento",
+        mensaje: `Actualización completada con errores (${fallidos} proyecto${fallidos === 1 ? "" : "s"} fallaron)`,
+      });
+    }
     setActualizando(false);
   }
 
@@ -96,7 +113,9 @@ export default function Home() {
         </button>
         {estadoActualizacion && (
           <div className={`resultado-actualizacion ${estadoActualizacion.tipo}`}>
-            {estadoActualizacion.tipo === "sin_cambios" ? "✓ " : "⚠ "}
+            {estadoActualizacion.tipo === "sin_cambios" && "✓ "}
+            {estadoActualizacion.tipo === "nuevo_evento" && "⚠ "}
+            {estadoActualizacion.tipo === "error_tecnico" && "❌ "}
             {estadoActualizacion.mensaje}
           </div>
         )}
@@ -121,8 +140,18 @@ export default function Home() {
       {cargando && <p className="vacio">Cargando proyectos...</p>}
       {error && (
         <p className="vacio">
-          No se pudo conectar con el backend ({error}). Revisa que <code>uvicorn app.main:app --reload</code> esté
-          corriendo en <code>{BACKEND_URL || "http://127.0.0.1:8000"}</code>.
+          {/* error.mensaje ya viene con la redacción correcta según el tipo (ver api.js:
+              "conexion" arma su propio mensaje "No fue posible conectar con el servidor...";
+              "api" es el mensaje que entregó el backend) — no hay que re-envolverlo. Solo se
+              agrega la sugerencia de diagnóstico cuando el problema es realmente de conexión. */}
+          {error.mensaje}
+          {error.tipo === "conexion" && (
+            <>
+              {" "}
+              Revisa que <code>uvicorn app.main:app --reload</code> esté corriendo en{" "}
+              <code>{BACKEND_URL || "http://127.0.0.1:8000"}</code>.
+            </>
+          )}
         </p>
       )}
 

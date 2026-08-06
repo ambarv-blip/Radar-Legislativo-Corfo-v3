@@ -130,7 +130,7 @@ export default function ProjectDetail() {
     setCargando(true);
     verProyecto(id)
       .then(setProyecto)
-      .catch((e) => setError(e.message))
+      .catch((e) => setError({ tipo: e.tipo || "conexion", mensaje: e.message }))
       .finally(() => setCargando(false));
   }
 
@@ -140,7 +140,15 @@ export default function ProjectDetail() {
   }, [id]);
 
   if (cargando) return <p className="vacio">Cargando proyecto...</p>;
-  if (error) return <p className="vacio">No se pudo conectar con el backend: {error}</p>;
+  if (error) {
+    // error.mensaje ya viene redactado según su tipo (ver api.js): para
+    // "conexion" (backend caído, CORS, timeout) arma su propio mensaje de
+    // "no fue posible conectar"; para "api" (404 proyecto no encontrado,
+    // 422, etc.) es el mensaje que entregó el backend, mostrado tal cual
+    // — el backend sí contestó, así que no correspondería decir "no se
+    // pudo conectar".
+    return <p className="vacio">{error.mensaje}</p>;
+  }
   if (!proyecto) return null;
 
   const estado = estiloEstado(proyecto.estado_actual);
