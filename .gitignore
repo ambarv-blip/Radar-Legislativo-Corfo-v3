@@ -4,6 +4,11 @@ __pycache__/
 backend/venv/
 venv/
 
+# Variables de entorno (nunca commitear la ANTHROPIC_API_KEY real)
+.env
+.env.local
+backend/.env
+
 # Node / frontend
 frontend/node_modules/
 frontend/dist/
