@@ -1,7 +1,12 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import Home from "./pages/Home";
 import ProjectDetail from "./pages/ProjectDetail";
+import ProcesoLegislativo from "./pages/ProcesoLegislativo";
 import "./styles.css";
+
+function claseTab({ isActive }) {
+  return `tab-link${isActive ? " tab-link--activo" : ""}`;
+}
 
 // Ícono de radar dibujado como SVG propio — no es la imagen de referencia insertada como
 // logo, es una reconstrucción del mismo motivo visual (anillos concéntricos, un arco de
@@ -36,10 +41,21 @@ function App() {
             </div>
           </div>
         </header>
+        <nav className="tabs">
+          <div className="tabs-inner">
+            <NavLink to="/" end className={claseTab}>
+              Dashboard
+            </NavLink>
+            <NavLink to="/proceso-legislativo" className={claseTab}>
+              ¿Cómo se tramita un proyecto de ley?
+            </NavLink>
+          </div>
+        </nav>
         <main>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/proyectos/:id" element={<ProjectDetail />} />
+            <Route path="/proceso-legislativo" element={<ProcesoLegislativo />} />
           </Routes>
         </main>
       </div>

@@ -11,6 +11,17 @@
   --media: #2b6ab3;
   --baja: #5f7386;
   --informativa: #6b7a89;
+
+  /* Escala cromática de etapas legislativas — fuente única de verdad. La usan
+     tanto las cápsulas .estado-pill del Dashboard/ficha como las etapas del
+     diagrama de "¿Cómo se tramita un proyecto de ley?" (ver ProcesoLegislativo.jsx),
+     para no repetir los mismos hex en dos archivos distintos. */
+  --color-sin-clasificar: #9AA5AE;
+  --color-primer-tramite: #38A7BA;
+  --color-segundo-tramite: #9F9FFF;
+  --color-tercer-tramite: #FD8983;
+  --color-aprobacion-presidencial: #39B994;
+  --color-ley-vigente: #196B24;
 }
 
 * { box-sizing: border-box; }
@@ -86,12 +97,96 @@ header.topbar .subtitulo {
   .icono-radar { width: 76px; height: 76px; }
 }
 
+/* Navegación por pestañas — Dashboard / ¿Cómo se tramita un proyecto de ley?
+   Visible en toda la app (App.jsx), debajo del encabezado institucional. */
+.tabs {
+  background: white;
+  border-bottom: 1px solid var(--borde);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.tabs-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 4vw, 48px);
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.tab-link {
+  padding: 14px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--texto-suave);
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+}
+.tab-link:hover { color: var(--azul-corfo); }
+.tab-link--activo {
+  color: var(--azul-corfo);
+  border-bottom-color: var(--acento);
+}
+
 main {
   flex: 1;
   max-width: 1100px;
   width: 100%;
   margin: 0 auto;
   padding: 28px 24px 60px;
+}
+
+/* Panel ejecutivo de indicadores — 4 tarjetas resumen del Dashboard. Mismo
+   lenguaje visual del encabezado institucional (acentos de color, bordes
+   suaves, sombra discreta) pero en tarjetas claras para no competir con la
+   tabla de proyectos debajo. */
+.panel-indicadores {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.tarjeta-indicador {
+  background: white;
+  border: 1px solid var(--borde);
+  border-top: 4px solid var(--azul-corfo);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(11, 42, 74, 0.06);
+}
+
+.tarjeta-indicador .numero {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--azul-corfo);
+  line-height: 1.15;
+}
+
+.tarjeta-indicador .numero.numero--fecha { font-size: 17px; }
+
+.tarjeta-indicador .titulo {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tarjeta-indicador--vigentes { border-top-color: var(--color-ley-vigente); }
+.tarjeta-indicador--vigentes .numero { color: var(--color-ley-vigente); }
+.tarjeta-indicador--tramite { border-top-color: var(--azul-claro); }
+.tarjeta-indicador--tramite .numero { color: var(--azul-claro); }
+.tarjeta-indicador--actualizacion { border-top-color: var(--acento); }
+.tarjeta-indicador--actualizacion .numero { color: var(--acento); }
+
+@media (max-width: 860px) {
+  .panel-indicadores { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .panel-indicadores { grid-template-columns: 1fr; }
 }
 
 .buscador {
@@ -191,12 +286,12 @@ main {
   color: white;
 }
 
-.estado-pill.estado-inicial { background: #38A7BA; }        /* Primer trámite constitucional */
-.estado-pill.estado-intermedio { background: #9F9FFF; }     /* Segundo trámite constitucional */
-.estado-pill.estado-avanzado { background: #FD8983; }       /* Tercer trámite / control TC */
-.estado-pill.estado-presidencial { background: #39B994; }   /* Trámite de aprobación presidencial */
-.estado-pill.estado-terminado { background: #196B24; }      /* Tramitación terminada — Ley publicada */
-.estado-pill.estado-sin-info { background: #9AA5AE; }        /* Sin clasificar */
+.estado-pill.estado-inicial { background: var(--color-primer-tramite); }
+.estado-pill.estado-intermedio { background: var(--color-segundo-tramite); }
+.estado-pill.estado-avanzado { background: var(--color-tercer-tramite); }
+.estado-pill.estado-presidencial { background: var(--color-aprobacion-presidencial); }
+.estado-pill.estado-terminado { background: var(--color-ley-vigente); }
+.estado-pill.estado-sin-info { background: var(--color-sin-clasificar); }
 
 .tarjeta-proyecto {
   background: white;
@@ -416,3 +511,164 @@ main {
   color: var(--texto-suave);
   padding: 40px 0;
 }
+
+/* =========================================================================
+   Pestaña "¿Cómo se tramita un proyecto de ley?" — diagrama de flujo hecho
+   solo con HTML/CSS (sin imágenes). Ver ProcesoLegislativo.jsx.
+   ========================================================================= */
+
+.proceso-encabezado h1 {
+  margin: 0 0 8px;
+  color: var(--azul-corfo);
+  font-size: 22px;
+}
+
+.proceso-subtitulo {
+  margin: 0;
+  color: var(--texto-suave);
+  font-size: 15px;
+  line-height: 1.55;
+  max-width: 720px;
+}
+
+.flujo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.flujo-paso {
+  background: white;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 14px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(11, 42, 74, 0.06);
+}
+.flujo-paso small { color: var(--texto-suave); font-weight: 400; }
+
+.flujo-flecha {
+  width: 2px;
+  height: 22px;
+  background: var(--borde);
+  margin: 0 auto;
+  position: relative;
+}
+.flujo-flecha::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid var(--texto-suave);
+}
+
+.flujo-etapa {
+  border: 1px solid var(--borde);
+  border-top: 5px solid var(--texto-suave);
+  border-radius: 12px;
+  padding: 18px;
+  background: #fbfcfd;
+}
+
+.flujo-etapa-titulo {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  text-align: center;
+}
+
+.flujo-etapa-contenido {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.flujo-etapa.estado-sin-info { border-top-color: var(--color-sin-clasificar); }
+.flujo-etapa.estado-sin-info .flujo-etapa-titulo { color: var(--color-sin-clasificar); }
+.flujo-etapa.estado-inicial { border-top-color: var(--color-primer-tramite); }
+.flujo-etapa.estado-inicial .flujo-etapa-titulo { color: var(--color-primer-tramite); }
+.flujo-etapa.estado-intermedio { border-top-color: var(--color-segundo-tramite); }
+.flujo-etapa.estado-intermedio .flujo-etapa-titulo { color: var(--color-segundo-tramite); }
+.flujo-etapa.estado-avanzado { border-top-color: var(--color-tercer-tramite); }
+.flujo-etapa.estado-avanzado .flujo-etapa-titulo { color: var(--color-tercer-tramite); }
+.flujo-etapa.estado-presidencial { border-top-color: var(--color-aprobacion-presidencial); }
+.flujo-etapa.estado-presidencial .flujo-etapa-titulo { color: var(--color-aprobacion-presidencial); }
+
+/* Preparado para una futura iteración que resalte automáticamente la etapa en
+   la que se encuentra un proyecto específico (ver comentario en
+   ProcesoLegislativo.jsx) — hoy ningún <Etapa> pasa activo=true. */
+.flujo-etapa--activa { box-shadow: 0 0 0 3px currentColor; }
+
+.flujo-decision {
+  align-self: center;
+  background: #fff8ef;
+  border: 1.5px dashed var(--acento);
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  color: #7a4a0d;
+}
+
+.flujo-bifurcacion {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 4px 0;
+}
+@media (max-width: 640px) {
+  .flujo-bifurcacion { grid-template-columns: 1fr; }
+}
+
+.flujo-rama {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--borde);
+}
+
+.flujo-rama-contenido {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.flujo-rama-chip {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 3px 14px;
+  border-radius: 999px;
+  color: white;
+}
+.flujo-rama--positiva .flujo-rama-chip { background: var(--color-ley-vigente); }
+.flujo-rama--negativa .flujo-rama-chip { background: var(--critica); }
+.flujo-rama--neutra .flujo-rama-chip { background: var(--texto-suave); }
+
+.flujo-terminal {
+  align-self: center;
+  padding: 10px 26px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: white;
+  background: var(--azul-corfo);
+}
+.flujo-terminal--fin { background: var(--critica); }
+.flujo-terminal--ley { background: var(--color-ley-vigente); font-size: 15px; padding: 12px 30px; }

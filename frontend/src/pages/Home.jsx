@@ -44,6 +44,25 @@ function estiloEstado(estado) {
   return { clase: "estado-pill estado-sin-info", texto: estado || "Sin información" };
 }
 
+// Clasificación específica para la tarjeta "Leyes vigentes" del panel de
+// indicadores — deliberadamente MÁS ESTRECHA que el bucket "estado-terminado"
+// de estiloEstado() (que también agrupa "promulg", "public", "despachado"):
+// aquí solo cuenta lo que el pedido definió como ley vigente ("Tramitación
+// terminada" o que contenga "Ley N°"). No reutiliza estiloEstado() porque son
+// dos preguntas distintas (cómo pintar la cápsula vs. qué cuenta como ley para
+// el indicador), pero tampoco se vuelve a escribir en otro lugar del código.
+function esLeyVigente(estado) {
+  const e = (estado || "").toLowerCase();
+  return e.includes("tramitación terminada") || e.includes("ley n°");
+}
+
+function formatearFechaHora(fecha) {
+  if (!fecha) return "Sin registro";
+  return fecha.toLocaleString("es-CL", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
 export default function Home() {
   const [proyectos, setProyectos] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -128,8 +147,41 @@ export default function Home() {
     return coincideTexto && coincidePrioridad;
   });
 
+  // Panel ejecutivo de indicadores — se calcula a partir de `proyectos`, el mismo
+  // estado ya cargado por listarProyectos() para la tabla de abajo; no hay una
+  // segunda consulta ni una fuente de datos distinta.
+  const totalProyectos = proyectos.length;
+  const leyesVigentes = proyectos.filter((p) => esLeyVigente(p.estado_actual)).length;
+  const enTramitacion = totalProyectos - leyesVigentes;
+  const ultimaActualizacion = proyectos.reduce((masReciente, p) => {
+    if (!p.fecha_ultima_revision) return masReciente;
+    const fecha = new Date(p.fecha_ultima_revision);
+    return !masReciente || fecha > masReciente ? fecha : masReciente;
+  }, null);
+
   return (
     <>
+      {!cargando && !error && (
+        <div className="panel-indicadores">
+          <div className="tarjeta-indicador tarjeta-indicador--total">
+            <div className="numero">{totalProyectos}</div>
+            <div className="titulo">Total de proyectos</div>
+          </div>
+          <div className="tarjeta-indicador tarjeta-indicador--vigentes">
+            <div className="numero">{leyesVigentes}</div>
+            <div className="titulo">Leyes vigentes</div>
+          </div>
+          <div className="tarjeta-indicador tarjeta-indicador--tramite">
+            <div className="numero">{enTramitacion}</div>
+            <div className="titulo">En tramitación</div>
+          </div>
+          <div className="tarjeta-indicador tarjeta-indicador--actualizacion">
+            <div className="numero numero--fecha">{formatearFechaHora(ultimaActualizacion)}</div>
+            <div className="titulo">Última actualización</div>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 16 }}>
         <button
           className="btn-actualizar"
