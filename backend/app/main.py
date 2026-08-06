@@ -60,7 +60,7 @@ def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
 
     ids_externos_existentes = {ev.id_externo for ev in proyecto.eventos if ev.id_externo}
-    resultado = ejecutar_monitoreo(proyecto.boletin, proyecto.estado_actual, ids_externos_existentes)
+    resultado = ejecutar_monitoreo(proyecto.boletin, proyecto.prm_id, proyecto.estado_actual, ids_externos_existentes)
     proyecto.fecha_ultima_revision = datetime.datetime.utcnow()
 
     if resultado["resultado"] == "error_tecnico":

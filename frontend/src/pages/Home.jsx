@@ -34,6 +34,7 @@ export default function Home() {
   const [filtroPrioridad, setFiltroPrioridad] = useState("Todas");
   const [actualizando, setActualizando] = useState(false);
   const [estadoActualizacion, setEstadoActualizacion] = useState(null);
+  const [progreso, setProgreso] = useState(null); // { actual, total } | null — solo mientras dura el ciclo
 
   useEffect(() => {
     listarProyectos()
@@ -56,11 +57,18 @@ export default function Home() {
   async function handleActualizarTodos() {
     setActualizando(true);
     setEstadoActualizacion(null);
+    const total = proyectos.length;
     let exitosos = 0;
     let fallidos = 0;
-    for (const p of proyectos) {
+    for (let i = 0; i < proyectos.length; i++) {
+      // Progreso real por proyecto: la actualización masiva es secuencial
+      // (no hay endpoint bulk en el backend, ver comentario más abajo) y
+      // cada consulta a la fuente oficial puede tardar varios segundos —
+      // sin esto el botón se queda en "Actualizando..." fijo sin indicar
+      // si avanza o está colgado.
+      setProgreso({ actual: i + 1, total });
       try {
-        const r = await actualizarProyecto(p.id);
+        const r = await actualizarProyecto(proyectos[i].id);
         if (r.resultado === "error_tecnico") {
           fallidos += 1;
         } else {
@@ -72,6 +80,7 @@ export default function Home() {
         fallidos += 1;
       }
     }
+    setProgreso(null);
     try {
       setProyectos(await listarProyectos());
     } catch (e) {
@@ -109,7 +118,11 @@ export default function Home() {
           onClick={handleActualizarTodos}
           disabled={actualizando || cargando || !!error || proyectos.length === 0}
         >
-          {actualizando ? "Actualizando..." : "Actualizar ahora"}
+          {actualizando
+            ? progreso
+              ? `Actualizando proyecto ${progreso.actual} de ${progreso.total}...`
+              : "Actualizando..."
+            : "Actualizar ahora"}
         </button>
         {estadoActualizacion && (
           <div className={`resultado-actualizacion ${estadoActualizacion.tipo}`}>

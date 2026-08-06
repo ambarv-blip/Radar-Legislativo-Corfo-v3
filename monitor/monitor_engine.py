@@ -60,27 +60,13 @@ TIMEOUT = 12
 INTENTOS_MAX = 2  # 1 intento inicial + 1 reintento ante error transitorio
 ESPERA_ENTRE_INTENTOS = 1.5  # segundos, se multiplica por el número de intento
 
-PRM_ID_CONOCIDOS = {
-    # Confirmados en la columna "Link seguimiento" del Excel original de Ambar
-    # (SEGUIMIENTO_PROYECTOS_DE_LEY.xlsx) — no son un supuesto, vienen de ahí.
-    # Los necesita tramitacion.aspx (HTML) además del boletín; Open Data
-    # consulta directo por boletín, sin prmID.
-    "16889-05": 17500,
-    "16441-19": 17011,
-    "16686-19": 17258,
-    "17064-08": 17680,
-    "16799-05": 17413,
-    "16817-05": 17428,
-    "17169-04": 17792,
-    "11608-09": 12126,
-    "16182-12": 16745,
-    "17777-05": 18426,
-}
-
-
-def obtener_prm_id(boletin):
-    return PRM_ID_CONOCIDOS.get(boletin)
-
+# El prmID que necesita tramitacion.aspx (HTML) —además del boletín— ya no
+# vive en un diccionario hardcodeado en este módulo: un proyecto nuevo que
+# no se agrega manualmente aquí quedaba con esta fuente permanentemente
+# rota, sin ningún aviso. Ahora es Proyecto.prm_id (columna persistente en
+# la base de datos, ver backend/app/database.py) y lo entrega el llamador
+# (ejecutar_monitoreo recibe prm_id como parámetro) — Open Data no lo
+# necesita, consulta directo por boletín.
 
 # =====================================================================
 # Fuente A — HTML de camara.cl: única fuente confirmada del "Estado" real
@@ -183,17 +169,21 @@ class EstadoCircuito:
         self.abierto_desde = None
         self.ultima_consulta_exitosa = datetime.datetime.utcnow()
 
-    def registrar_fallo_bloqueo(self):
-        """Registra un fallo tipo bloqueo (403). Devuelve True si este
-        fallo fue el que recién abrió el circuito (para que el llamador
-        pueda, por ejemplo, invalidar la sesión asociada)."""
+    def registrar_fallo(self, razon="desconocida"):
+        """Registra cualquier fallo relevante de esta fuente — bloqueo 403,
+        pero también timeout o error de conexión: antes solo el 403 abría
+        el circuito, así que una caída real de camara.cl (no un bloqueo
+        WAF) generaba reintentos completos sin protección alguna en cada
+        proyecto de una actualización masiva. Devuelve True si este fallo
+        fue el que recién abrió el circuito (para que el llamador pueda,
+        por ejemplo, invalidar la sesión asociada en el caso de un 403)."""
         self.fallos_consecutivos += 1
         if self.fallos_consecutivos >= self.umbral_fallos and self.abierto_desde is None:
             self.abierto_desde = datetime.datetime.utcnow()
             logger.error(
-                "Circuito de %s ABIERTO tras %d bloqueo(s) 403 consecutivo(s). "
+                "Circuito de %s ABIERTO tras %d fallo(s) consecutivo(s) (último: %s). "
                 "Se omitirá esta fuente por %ds (fuente marcada como degradada).",
-                self.nombre_fuente, self.fallos_consecutivos, self.cooldown_segundos,
+                self.nombre_fuente, self.fallos_consecutivos, razon, self.cooldown_segundos,
             )
             return True
         return False
@@ -211,15 +201,20 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
     evidencia real de producción), y un boletín/prmID inválido tampoco se
     arregla reintentando.
 
-    Si el circuito de esta fuente está abierto (varios 403 consecutivos
-    recientes), la consulta se omite por completo — la fuente queda
-    marcada como degradada temporalmente, pero esta función nunca lanza
-    excepción ni bloquea al llamador: sigue devolviendo la misma forma de
-    resultado de siempre con exito=False.
+    Si el circuito de esta fuente está abierto (varios fallos consecutivos
+    recientes — 403, timeout o error de conexión), la consulta se omite
+    por completo — la fuente queda marcada como degradada temporalmente,
+    pero esta función nunca lanza excepción ni bloquea al llamador: sigue
+    devolviendo la misma forma de resultado de siempre con exito=False.
     """
     if prm_id is None:
+        mensaje = (
+            f"Proyecto sin prm_id configurado (boletín {boletin}) — no se puede consultar "
+            "la ficha de tramitación HTML de camara.cl. Revisa Proyecto.prm_id en la base de datos."
+        )
+        logger.warning(mensaje)
         return {"exito": False, "codigo_http": None, "url_consultada": TRAMITACION_URL,
-                "texto": None, "error": f"No hay prmID conocido para boletín {boletin}"}
+                "texto": None, "error": mensaje}
 
     if _circuito_html.esta_abierto():
         logger.warning(
@@ -229,8 +224,8 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
         return {
             "exito": False, "codigo_http": None, "url_consultada": TRAMITACION_URL,
             "texto": None,
-            "error": "camara.cl (HTML) está temporalmente marcado como degradado tras "
-                     "bloqueos 403 repetidos; se omite esta consulta.",
+            "error": "camara.cl (HTML) está temporalmente marcado como degradado tras fallos "
+                     "consecutivos (bloqueos 403, timeouts o errores de conexión); se omite esta consulta.",
         }
 
     params = {"prmID": prm_id, "prmBOLETIN": boletin}
@@ -254,12 +249,18 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
         except requests.Timeout as e:
             ultimo_error = f"Timeout tras {TIMEOUT}s consultando camara.cl"
             logger.warning("Timeout en intento %d/%d para boletín %s: %s", intento, INTENTOS_MAX, boletin, e)
+            if _circuito_html.registrar_fallo("timeout"):
+                break  # ya se abrió el circuito: reintentar de inmediato no cambiaría nada
         except requests.ConnectionError as e:
             ultimo_error = f"Error de conexión con camara.cl: {str(e)[:300]}"
             logger.warning("Error de conexión en intento %d/%d para boletín %s: %s", intento, INTENTOS_MAX, boletin, e)
+            if _circuito_html.registrar_fallo("error de conexión"):
+                break
         except requests.RequestException as e:
             ultimo_error = f"{type(e).__name__}: {str(e)[:300]}"
             logger.warning("Error de red en intento %d/%d para boletín %s: %s", intento, INTENTOS_MAX, boletin, e)
+            if _circuito_html.registrar_fallo("error de red"):
+                break
         else:
             ultimo_status = resp.status_code
             logger.info("camara.cl respondió HTTP %s desde %s", resp.status_code, resp.url)
@@ -275,7 +276,7 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
                 logger.warning("Bloqueo 403 en intento %d/%d para boletín %s", intento, INTENTOS_MAX, boletin)
                 if resp.text:
                     logger.warning("Cuerpo de la respuesta 403 (primeros 500 chars): %s", resp.text[:500])
-                if _circuito_html.registrar_fallo_bloqueo():
+                if _circuito_html.registrar_fallo("bloqueo 403"):
                     _cliente_html.invalidar()
                 break  # un 403 no se arregla reintentando de inmediato
             elif resp.status_code == 404:
@@ -506,9 +507,19 @@ def _descripcion_votacion(v):
     return base
 
 
-def ejecutar_monitoreo(boletin, estado_actual_guardado, ids_externos_existentes=frozenset()):
+def ejecutar_monitoreo(boletin, prm_id, estado_actual_guardado, ids_externos_existentes=frozenset()):
     """
     Punto de entrada único usado por el backend.
+
+    prm_id: identificador interno que camara.cl usa para la ficha HTML de
+    tramitación (Proyecto.prm_id en la base de datos). Ya no se busca en un
+    diccionario hardcodeado de este módulo — el llamador lo entrega desde
+    el registro persistente del proyecto, así un proyecto nuevo no depende
+    de una actualización manual de monitor_engine.py para que funcione la
+    fuente HTML. Puede ser None (proyecto sin prm_id configurado): en ese
+    caso consultar_fuente_oficial_scraper lo registra con un warning
+    explícito y devuelve exito=False — Open Data sigue aportando lo que
+    pueda igual, sin bloquearse por la ausencia de la otra fuente.
 
     ids_externos_existentes: set de Evento.id_externo ya guardados en el
     timeline de este proyecto — se usa para no duplicar votaciones ya
@@ -521,8 +532,6 @@ def ejecutar_monitoreo(boletin, estado_actual_guardado, ids_externos_existentes=
                                             construir un Evento nuevo)
       error: str | None
     """
-    prm_id = obtener_prm_id(boletin)
-
     html = consultar_fuente_oficial_scraper(boletin, prm_id)
     estado_html = extraer_estado_resumen(html["texto"]) if html["exito"] else None
     ultima_actuacion_html = extraer_ultima_actuacion(html["texto"]) if html["exito"] else None

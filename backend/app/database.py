@@ -24,7 +24,10 @@ class Proyecto(Base):
     descripcion = Column(Text)
     comentario_estrategico = Column(Text)
     prioridad_monitoreo = Column(String)
-    prm_id = Column(Integer)  # identificador interno del sitio de la Cámara (temporal, ver monitor/)
+    # Identificador interno que camara.cl usa para la ficha HTML de tramitación (prmID en
+    # tramitacion.aspx). Fuente canónica de este dato: si es null, el monitor lo registra con
+    # un warning explícito y omite esa fuente para este proyecto (ver monitor/monitor_engine.py).
+    prm_id = Column(Integer)
     link_seguimiento = Column(String)
     fecha_ultima_revision = Column(DateTime)
     ultimo_analisis_ia = Column(Text)  # placeholder para el futuro análisis IA
