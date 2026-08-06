@@ -57,7 +57,12 @@ PROYECTOS = [
         nombre="PdL Transferencia Tecnólogica",
         anio_ingreso=2024,
         camara_origen="Cámara de Diputados",
-        estado_actual="Segundo trámite constitucional",
+        # Sincronizado con el último evento migrado de este mismo proyecto (ver EVENTOS
+        # más abajo: estado_nuevo="Aprobado por el Congreso", 09 Jun. 2026) — antes quedaba
+        # en "Segundo trámite constitucional", una etapa anterior incluso al estado_anterior
+        # de ese evento ("Tercer trámite constitucional"), porque este campo se cargaba sin
+        # reconciliarlo contra el historial que se migraba en el mismo script.
+        estado_actual="Aprobado por el Congreso",
         descripcion=(
             "Proyecto que dicta normas sobre transferencia de tecnología y conocimiento, con foco en "
             "empresas de base científico-tecnológica (EBCT) y propiedad intelectual."
@@ -136,7 +141,11 @@ PROYECTOS = [
         nombre="PdL Sobre el uso de agua de mar para desalinización",
         anio_ingreso=2018,
         camara_origen="Senado",
-        estado_actual="Trámite de aprobación presidencial",
+        # Sincronizado con el último evento migrado de este mismo proyecto (ver EVENTOS
+        # más abajo: estado_nuevo="Tramitación terminada — Ley N° 21.813", 12 May. 2026,
+        # anterior a HOY) — antes quedaba en "Trámite de aprobación presidencial", una
+        # etapa anterior a la promulgación que el propio historial migrado ya registraba.
+        estado_actual="Tramitación terminada — Ley N° 21.813",
         descripcion=(
             "Proyecto que crea un marco institucional para el desarrollo de plantas desalinizadoras y "
             "el uso de agua de mar, incluyendo la Estrategia Nacional de Desalinización."
@@ -217,7 +226,32 @@ EVENTOS = {
 }
 
 
+def _verificar_consistencia_estado_actual():
+    """Guarda-raíl contra el bug detectado en auditoría: estado_actual se cargaba
+    manualmente en PROYECTOS sin reconciliarlo contra el propio historial migrado en
+    EVENTOS, y podía quedar desincronizado con el último cambio de trámite real ya
+    conocido (ej. boletín 16686-19 quedaba en "Segundo trámite constitucional" pese a
+    que su evento migrado decía "Aprobado por el Congreso"). Los eventos de cada
+    boletín en EVENTOS están en orden cronológico ascendente, así que el último de la
+    lista es el estado más reciente conocido por el historial; si no coincide con
+    estado_actual, se detiene el seed en vez de sembrar el dato inconsistente."""
+    proyectos_por_boletin = {p["boletin"]: p for p in PROYECTOS}
+    for boletin, eventos in EVENTOS.items():
+        if not eventos:
+            continue
+        estado_segun_historial = eventos[-1]["estado_nuevo"]
+        estado_actual = proyectos_por_boletin[boletin]["estado_actual"]
+        if estado_segun_historial != estado_actual:
+            raise ValueError(
+                f"Inconsistencia en PROYECTOS/EVENTOS para boletín {boletin}: "
+                f"estado_actual={estado_actual!r} pero el último evento migrado indica "
+                f"estado_nuevo={estado_segun_historial!r}. Corrige estado_actual en PROYECTOS "
+                f"antes de sembrar."
+            )
+
+
 def seed():
+    _verificar_consistencia_estado_actual()
     init_db()
     db = SessionLocal()
     try:

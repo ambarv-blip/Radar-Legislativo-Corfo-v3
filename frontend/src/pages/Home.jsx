@@ -8,7 +8,17 @@ import { listarProyectos, actualizarProyecto, BACKEND_URL } from "../api";
 // ahora" cambia el Estado de un proyecto, por eso vive en el mismo lugar que la tabla.
 function estiloEstado(estado) {
   const e = (estado || "").toLowerCase();
-  if (e.includes("ley") || e.includes("promulg") || e.includes("public") || e.includes("terminada")) {
+  // Estados positivos / de tramitación finalizada (mismo bucket de color que "ley"/"promulg"):
+  // "despachado" y "aprobado por el congreso" no tenían regla propia y caían en
+  // "Sin información" pese a ser estados conocidos con certeza.
+  if (
+    e.includes("ley") ||
+    e.includes("promulg") ||
+    e.includes("public") ||
+    e.includes("terminada") ||
+    e.includes("despachado") ||
+    e.includes("aprobado por el congreso")
+  ) {
     return { clase: "estado-pill estado-terminado", texto: estado };
   }
   if (e.includes("aprobación presidencial")) {
@@ -22,6 +32,12 @@ function estiloEstado(estado) {
   }
   if (e.includes("primer trámite")) {
     return { clase: "estado-pill estado-inicial", texto: estado };
+  }
+  // Mención genérica a "comisión" sin especificar el trámite (texto libre de Cámara que no
+  // calzó ninguna regla anterior más específica) — se trata como en curso, no como
+  // "sin información".
+  if (e.includes("comisión") || e.includes("comision")) {
+    return { clase: "estado-pill estado-intermedio", texto: estado };
   }
   return { clase: "estado-pill estado-sin-info", texto: estado || "Sin información" };
 }
