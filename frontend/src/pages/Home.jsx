@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listarProyectos, BACKEND_URL } from "../api";
+import { listarProyectos, actualizarProyecto, BACKEND_URL } from "../api";
 
 // Escala de avance del trámite -> color institucional.
 // Cuanto más avanzado el trámite, más se acerca al color de acento (dorado Corfo);
@@ -32,6 +32,8 @@ export default function Home() {
   const [error, setError] = useState(null);
   const [busqueda, setBusqueda] = useState("");
   const [filtroPrioridad, setFiltroPrioridad] = useState("Todas");
+  const [actualizando, setActualizando] = useState(false);
+  const [estadoActualizacion, setEstadoActualizacion] = useState(null);
 
   useEffect(() => {
     listarProyectos()
@@ -39,6 +41,40 @@ export default function Home() {
       .catch((e) => setError(e.message))
       .finally(() => setCargando(false));
   }, []);
+
+  // Reutiliza la misma llamada por-proyecto que antes disparaba el botón
+  // dentro de la ficha (actualizarProyecto en api.js) — no existe un
+  // endpoint de actualización masiva en el backend, así que se consulta la
+  // fuente oficial de cada proyecto monitoreado, uno a la vez, y al final
+  // se recarga el listado completo desde el backend.
+  async function handleActualizarTodos() {
+    setActualizando(true);
+    setEstadoActualizacion(null);
+    let errores = 0;
+    for (const p of proyectos) {
+      try {
+        await actualizarProyecto(p.id);
+      } catch {
+        errores += 1;
+      }
+    }
+    try {
+      setProyectos(await listarProyectos());
+    } catch (e) {
+      setEstadoActualizacion({ tipo: "error_tecnico", mensaje: `No se pudo recargar el listado: ${e.message}` });
+      setActualizando(false);
+      return;
+    }
+    setEstadoActualizacion(
+      errores > 0
+        ? {
+            tipo: "error_tecnico",
+            mensaje: `Actualización completada con errores (${errores} de ${proyectos.length} proyectos no se pudieron actualizar).`,
+          }
+        : { tipo: "sin_cambios", mensaje: "Actualización completada" }
+    );
+    setActualizando(false);
+  }
 
   const filtrados = proyectos.filter((p) => {
     const coincideTexto =
@@ -50,6 +86,22 @@ export default function Home() {
 
   return (
     <>
+      <div style={{ marginBottom: 16 }}>
+        <button
+          className="btn-actualizar"
+          onClick={handleActualizarTodos}
+          disabled={actualizando || cargando || !!error || proyectos.length === 0}
+        >
+          {actualizando ? "Actualizando..." : "Actualizar ahora"}
+        </button>
+        {estadoActualizacion && (
+          <div className={`resultado-actualizacion ${estadoActualizacion.tipo}`}>
+            {estadoActualizacion.tipo === "sin_cambios" ? "✓ " : "⚠ "}
+            {estadoActualizacion.mensaje}
+          </div>
+        )}
+      </div>
+
       <div className="buscador">
         <input
           type="text"
