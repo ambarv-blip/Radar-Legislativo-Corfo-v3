@@ -16,7 +16,7 @@ observatorio-legislativo/
   frontend/   → Interfaz web (React + Vite)
   database/   → Base de datos SQLite (se genera sola)
   monitor/    → Motor de monitoreo (consulta camara.cl, compara estado)
-  ai/         → Placeholder de análisis IA (a integrar en un ciclo posterior)
+  ai/         → Análisis Ejecutivo IA (llamada real a la API de Claude/Anthropic)
   scripts/    → Script de carga inicial de datos
 ```
 
@@ -78,9 +78,41 @@ normal a internet, el botón mostrará "Error técnico de conexión" — es el c
 esperado y correcto, no un bug: el sistema nunca debe fingir un resultado que no pudo
 verificar.
 
-## Placeholder de IA
+## Análisis Ejecutivo IA
 
-El campo "Último análisis IA" en el detalle de cada proyecto es, por ahora, un texto fijo
-(`ai/analysis.py`) que se actualiza cuando se detecta un evento nuevo. En un ciclo
-posterior, esta función llamará a la API de Claude para generar el análisis estructurado
-real.
+Al abrir la ficha de un proyecto, si todavía no tiene un análisis generado, el backend
+llama en vivo a la API de Claude (`ai/analysis.py`) para generar el "🤖 Análisis Ejecutivo
+IA": 6 bloques breves (objetivo, problema que busca resolver, aspectos principales,
+implicancias para Corfo, estado del debate legislativo, conclusión ejecutiva), construidos
+**exclusivamente** a partir de la información oficial que el propio Observatorio ya
+recopiló (descripción, estado actual, historial de eventos) — nunca de fuentes externas ni
+del conocimiento general del modelo. Una vez generado queda almacenado y no se vuelve a
+pedir; se regenera solo cuando `actualizar_proyecto()` detecta un cambio de estado o un
+evento nuevo.
+
+### Configurar la API key (requerido para que funcione)
+
+El backend lee la key **únicamente** desde la variable de entorno `ANTHROPIC_API_KEY` — no
+existe ningún valor hardcodeado en el código ni se lee desde ningún archivo versionado.
+Si la variable no está configurada, el análisis no falla ni inventa contenido: cada bloque
+muestra "No se encontró información suficiente para este apartado.".
+
+**En GitHub Codespaces** (recomendado, la key nunca queda en el repo ni en el filesystem del
+Codespace):
+
+1. En GitHub, ve a **Settings → Secrets and variables → Codespaces** del repositorio (o a
+   tu configuración personal de Codespaces si prefieres que aplique a todos tus repos).
+2. **New repository secret** → nombre exacto `ANTHROPIC_API_KEY` → pega tu key de
+   [console.anthropic.com](https://console.anthropic.com/) → **Add secret**.
+3. Si el Codespace ya estaba abierto, hay que reconstruirlo o reiniciarlo (**Codespaces →
+   ⋯ → Rebuild Container**, o simplemente detenerlo y volver a abrirlo) para que la variable
+   quede disponible en el entorno.
+
+**En local**, expórtala en la terminal antes de levantar el backend:
+
+```bash
+export ANTHROPIC_API_KEY=tu_key_aqui
+```
+
+Ver también `.env.example` en la raíz del proyecto (documentación de referencia; el backend
+no carga archivos `.env` automáticamente).
