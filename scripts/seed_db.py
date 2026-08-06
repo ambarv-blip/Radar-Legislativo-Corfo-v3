@@ -153,6 +153,9 @@ PROYECTOS = [
         comentario_estrategico=None,
         prioridad_monitoreo="Media",
         prm_id=12126,
+        # Ley N° 21.813 ya publicada — verificado en LeyChile (BCN).
+        url_ley_publicada="https://www.bcn.cl/leychile/navegar?idNorma=1223983",
+        fecha_vigencia=datetime.datetime(2027, 11, 13),
     ),
     dict(
         boletin="16182-12",

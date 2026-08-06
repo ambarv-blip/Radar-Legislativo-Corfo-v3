@@ -8,21 +8,23 @@ import { listarProyectos, actualizarProyecto, BACKEND_URL } from "../api";
 // ahora" cambia el Estado de un proyecto, por eso vive en el mismo lugar que la tabla.
 function estiloEstado(estado) {
   const e = (estado || "").toLowerCase();
-  // Estados positivos / de tramitación finalizada (mismo bucket de color que "ley"/"promulg"):
-  // "despachado" y "aprobado por el congreso" no tenían regla propia y caían en
-  // "Sin información" pese a ser estados conocidos con certeza.
+  // Estados positivos / de tramitación finalizada ("despachado" no tenía regla propia y
+  // caía en "Sin información" pese a ser un estado conocido con certeza).
   if (
     e.includes("ley") ||
     e.includes("promulg") ||
     e.includes("public") ||
     e.includes("terminada") ||
-    e.includes("despachado") ||
-    e.includes("aprobado por el congreso")
+    e.includes("despachado")
   ) {
     return { clase: "estado-pill estado-terminado", texto: estado };
   }
-  if (e.includes("aprobación presidencial")) {
-    return { clase: "estado-pill estado-presidencial", texto: estado };
+  // "Aprobado por el Congreso" corresponde al mismo trámite real que "Trámite de
+  // aprobación presidencial" (ambas cámaras ya aprobaron, el proyecto espera la firma
+  // presidencial) — se muestra con esa etiqueta aunque el texto guardado sea otro; el
+  // dato crudo en BD/API (proyecto.estado_actual) no se modifica, solo la presentación.
+  if (e.includes("aprobación presidencial") || e.includes("aprobado por el congreso")) {
+    return { clase: "estado-pill estado-presidencial", texto: "Trámite de aprobación presidencial" };
   }
   if (e.includes("tercer trámite") || e.includes("control de constitucionalidad")) {
     return { clase: "estado-pill estado-avanzado", texto: estado };

@@ -8,26 +8,43 @@ function formatearFecha(iso) {
   return d.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+const MESES_LARGOS = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+// "2027-11-13T00:00:00" -> "Entra en vigencia el 13 de noviembre del 2027". Solo se llama
+// cuando proyecto.fecha_vigencia existe (ver render más abajo) — un proyecto en trámite no
+// tiene este campo, así que nunca se ve esta alerta para un proyecto que aún no es ley.
+function formatearFechaVigencia(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `Entra en vigencia el ${d.getDate()} de ${MESES_LARGOS[d.getMonth()]} del ${d.getFullYear()}`;
+}
+
 // Misma escala de color que la tabla del Dashboard (ver estiloEstado en
 // Home.jsx) — se reutilizan las clases .estado-pill ya existentes en
 // styles.css para que la cápsula se vea idéntica en ambas vistas.
 function estiloEstado(estado) {
   const e = (estado || "").toLowerCase();
-  // Estados positivos / de tramitación finalizada (mismo bucket de color que "ley"/"promulg"):
-  // "despachado" y "aprobado por el congreso" no tenían regla propia y caían en
-  // "Sin información" pese a ser estados conocidos con certeza.
+  // Estados positivos / de tramitación finalizada ("despachado" no tenía regla propia y
+  // caía en "Sin información" pese a ser un estado conocido con certeza).
   if (
     e.includes("ley") ||
     e.includes("promulg") ||
     e.includes("public") ||
     e.includes("terminada") ||
-    e.includes("despachado") ||
-    e.includes("aprobado por el congreso")
+    e.includes("despachado")
   ) {
     return { clase: "estado-pill estado-terminado", texto: estado };
   }
-  if (e.includes("aprobación presidencial")) {
-    return { clase: "estado-pill estado-presidencial", texto: estado };
+  // "Aprobado por el Congreso" corresponde al mismo trámite real que "Trámite de
+  // aprobación presidencial" (ambas cámaras ya aprobaron, el proyecto espera la firma
+  // presidencial) — se muestra con esa etiqueta aunque el texto guardado sea otro; el
+  // dato crudo en BD/API (proyecto.estado_actual) no se modifica, solo la presentación.
+  if (e.includes("aprobación presidencial") || e.includes("aprobado por el congreso")) {
+    return { clase: "estado-pill estado-presidencial", texto: "Trámite de aprobación presidencial" };
   }
   if (e.includes("tercer trámite") || e.includes("control de constitucionalidad")) {
     return { clase: "estado-pill estado-avanzado", texto: estado };
@@ -210,16 +227,42 @@ export default function ProjectDetail() {
           </div>
         )}
 
-        {proyecto.link_seguimiento && (
+        {(proyecto.link_seguimiento || proyecto.url_ley_publicada) && (
           <div className="fila-detalle">
-            <div className="campo">
-              <label>Fuente oficial</label>
-              <p>
-                <a href={proyecto.link_seguimiento} target="_blank" rel="noopener noreferrer" className="link-boletin">
-                  Ver ficha de tramitación en camara.cl ↗
+            {proyecto.link_seguimiento && (
+              <div className="campo">
+                <label>Fuente oficial</label>
+                <p>
+                  <a href={proyecto.link_seguimiento} target="_blank" rel="noopener noreferrer" className="link-boletin">
+                    Ver ficha de tramitación en camara.cl ↗
+                  </a>
+                </p>
+              </div>
+            )}
+            {proyecto.url_ley_publicada && (
+              <div className="campo">
+                <label>Ley publicada</label>
+                <p>
+                  <a href={proyecto.url_ley_publicada} target="_blank" rel="noopener noreferrer" className="link-boletin">
+                    Ver Ley publicada en BCN ↗
+                  </a>
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {proyecto.fecha_vigencia && (
+          <div className="alerta-vigencia">
+            <strong>{formatearFechaVigencia(proyecto.fecha_vigencia)}</strong>
+            {proyecto.url_ley_publicada && (
+              <p style={{ marginTop: 4 }}>
+                Fuente:{" "}
+                <a href={proyecto.url_ley_publicada} target="_blank" rel="noopener noreferrer">
+                  {proyecto.url_ley_publicada}
                 </a>
               </p>
-            </div>
+            )}
           </div>
         )}
       </div>
