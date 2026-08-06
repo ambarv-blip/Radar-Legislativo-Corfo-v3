@@ -28,25 +28,62 @@ body {
   flex-direction: column;
 }
 
+/* Encabezado — gama cromática tomada del ícono de radar de referencia: azul marino muy
+   oscuro de fondo con un acento coral (barrido del radar, subtítulo). Alto entre 170 y
+   220px, contenido centrado y alineado con el ancho de <main>, totalmente responsive:
+   en pantallas angostas el ícono se achica y el bloque de texto puede envolver sin que el
+   ícono llegue a taparlo (son hermanos flex, nunca se superponen). */
 header.topbar {
-  background: var(--azul-corfo);
+  background: linear-gradient(135deg, #0a1128 0%, #0d2140 55%, #123a5e 100%);
   color: white;
-  padding: 18px 32px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+.topbar-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  min-height: 190px;
+  padding: 26px clamp(20px, 4vw, 48px);
   display: flex;
-  align-items: baseline;
-  gap: 14px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  align-items: center;
+  gap: clamp(18px, 3vw, 36px);
+}
+
+.icono-radar {
+  flex: 0 0 auto;
+  width: clamp(96px, 13vw, 168px);
+  height: clamp(96px, 13vw, 168px);
+  max-width: 33%;
+}
+
+.radar-anillo { fill: none; stroke: rgba(255, 255, 255, 0.55); stroke-width: 5; }
+.radar-barrido { fill: none; stroke: #ff6f61; stroke-width: 6; stroke-linecap: round; }
+.radar-linea { stroke: rgba(255, 255, 255, 0.85); stroke-width: 5; stroke-linecap: round; }
+.radar-punto { fill: #ffffff; }
+
+.topbar-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
 header.topbar .marca {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 800;
   letter-spacing: 0.3px;
+  line-height: 1.15;
 }
 
 header.topbar .subtitulo {
-  font-size: 13px;
-  color: #b9cbdc;
+  font-size: clamp(13px, 1.4vw, 16px);
+  color: #ff6f61;
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .topbar-inner { min-height: 170px; gap: 16px; }
+  .icono-radar { width: 76px; height: 76px; }
 }
 
 main {
@@ -154,12 +191,12 @@ main {
   color: white;
 }
 
-.estado-pill.estado-inicial { background: #44B3E1; }        /* Primer trámite constitucional */
-.estado-pill.estado-intermedio { background: #D86DCD; }     /* Segundo trámite constitucional */
-.estado-pill.estado-avanzado { background: #FF9933; }       /* Tercer trámite / control TC */
-.estado-pill.estado-presidencial { background: #4EA72E; }   /* Trámite de aprobación presidencial */
+.estado-pill.estado-inicial { background: #38A7BA; }        /* Primer trámite constitucional */
+.estado-pill.estado-intermedio { background: #9F9FFF; }     /* Segundo trámite constitucional */
+.estado-pill.estado-avanzado { background: #FD8983; }       /* Tercer trámite / control TC */
+.estado-pill.estado-presidencial { background: #69D1B3; }   /* Trámite de aprobación presidencial */
 .estado-pill.estado-terminado { background: #196B24; }      /* Tramitación terminada — Ley publicada */
-.estado-pill.estado-sin-info { background: #9aa5ae; }        /* Sin clasificar */
+.estado-pill.estado-sin-info { background: #9AA5AE; }        /* Sin clasificar */
 
 .tarjeta-proyecto {
   background: white;
