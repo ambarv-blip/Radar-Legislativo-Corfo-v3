@@ -21,7 +21,7 @@ from typing import List
 from app.database import init_db, get_db, Proyecto, Evento
 from app import schemas
 from monitor.monitor_engine import ejecutar_monitoreo
-from ai.analysis import generar_analisis_placeholder
+from ai.analysis import generar_analisis_ejecutivo
 
 app = FastAPI(title="Observatorio Legislativo Estratégico Corfo", version="0.1.0")
 
@@ -93,8 +93,13 @@ def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
     if resultado["estado_nuevo"]:
         proyecto.estado_actual = resultado["estado_nuevo"]
 
-    ultima_descripcion = eventos_nuevos[-1]["descripcion"]
-    proyecto.ultimo_analisis_ia = generar_analisis_placeholder(proyecto.nombre, ultima_descripcion)
+    db.commit()
+    db.refresh(proyecto)
+
+    # Se genera después del commit/refresh para que el historial de eventos
+    # que recibe el análisis (proyecto.eventos) incluya los eventos recién
+    # detectados, no solo los previos.
+    proyecto.ultimo_analisis_ia = generar_analisis_ejecutivo(proyecto)
     db.commit()
     db.refresh(proyecto)
 

@@ -153,6 +153,100 @@ function hitoDeRespaldo(proyecto) {
 // explicativo antes que un timeline con fechas potencialmente engañosas.
 const TIMELINE_EJECUTIVO_HABILITADO = false;
 
+// Los 6 bloques del Análisis Ejecutivo IA, en el orden fijo definido para la
+// funcionalidad. `lista: true` marca el único bloque que se muestra como
+// viñetas (aspectos_principales); `destacado: true` marca el bloque de
+// implicancias para Corfo, el más relevante para la decisión ejecutiva.
+const BLOQUES_ANALISIS = [
+  { clave: "objetivo", icono: "🎯", titulo: "Objetivo del proyecto" },
+  { clave: "problema", icono: "⚠️", titulo: "¿Qué problema busca resolver?" },
+  { clave: "aspectos_principales", icono: "📌", titulo: "Aspectos principales", lista: true },
+  { clave: "implicancias_corfo", icono: "🏛", titulo: "Posibles implicancias para Corfo", destacado: true },
+  { clave: "estado_debate", icono: "💬", titulo: "Estado del debate legislativo" },
+  { clave: "conclusion", icono: "🧠", titulo: "Conclusión Ejecutiva" },
+];
+
+function parrafos(texto) {
+  return String(texto || "")
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+function AnalisisEjecutivoIA({ ultimoAnalisisIA }) {
+  if (!ultimoAnalisisIA) {
+    return (
+      <div className="panel panel-analisis-ia">
+        <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+        <p className="placeholder-ia">
+          Aún no se ha generado un análisis IA para este proyecto — se generará automáticamente la próxima vez que se detecte un nuevo evento.
+        </p>
+      </div>
+    );
+  }
+
+  let analisis;
+  try {
+    analisis = JSON.parse(ultimoAnalisisIA);
+  } catch {
+    // Compatibilidad con análisis antiguos guardados como texto plano (placeholder).
+    return (
+      <div className="panel panel-analisis-ia">
+        <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+        <p className="placeholder-ia">{ultimoAnalisisIA}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel panel-analisis-ia">
+      <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+
+      <div className="disclaimer-ia">
+        <span aria-hidden="true">ℹ️</span>
+        <p>
+          Este análisis fue generado automáticamente mediante inteligencia artificial utilizando
+          exclusivamente información oficial disponible en la plataforma del Congreso Nacional. Su
+          propósito es apoyar el análisis ejecutivo y no reemplaza la revisión de las fuentes oficiales.
+        </p>
+      </div>
+
+      <div className="bloques-analisis-ia">
+        {BLOQUES_ANALISIS.map((bloque) => {
+          const valor = analisis[bloque.clave];
+          return (
+            <div
+              key={bloque.clave}
+              className={`bloque-analisis-ia${bloque.destacado ? " bloque-analisis-ia--destacado" : ""}`}
+            >
+              <h2>
+                <span aria-hidden="true">{bloque.icono}</span> {bloque.titulo}
+              </h2>
+              {bloque.lista ? (
+                Array.isArray(valor) && valor.length > 0 ? (
+                  <ul>
+                    {valor.map((item, i) => (
+                      <li key={i}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="sin-informacion-ia">No se encontró información suficiente para este apartado.</p>
+                )
+              ) : (
+                parrafos(valor).map((p, i) => (
+                  <p key={i} className={p === "No se encontró información suficiente para este apartado." ? "sin-informacion-ia" : undefined}>
+                    {p}
+                  </p>
+                ))
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const [proyecto, setProyecto] = useState(null);
@@ -267,12 +361,7 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      <div className="panel">
-        <h1 style={{ fontSize: 16 }}>Último análisis IA</h1>
-        <p className="placeholder-ia">
-          {proyecto.ultimo_analisis_ia || "Aún no se ha generado un análisis IA para este proyecto — se generará automáticamente la próxima vez que se detecte un nuevo evento."}
-        </p>
-      </div>
+      <AnalisisEjecutivoIA ultimoAnalisisIA={proyecto.ultimo_analisis_ia} />
 
       <div className="panel">
         <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>
