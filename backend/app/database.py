@@ -31,6 +31,11 @@ class Proyecto(Base):
     link_seguimiento = Column(String)
     fecha_ultima_revision = Column(DateTime)
     ultimo_analisis_ia = Column(Text)  # placeholder para el futuro análisis IA
+    # Ambos opcionales: solo se completan cuando el proyecto efectivamente terminó siendo
+    # ley (la mayoría de los proyectos en trámite nunca llegan a este punto). No se derivan
+    # automáticamente del monitor — se cargan/verifican igual que link_seguimiento.
+    url_ley_publicada = Column(String)  # ficha de la ley en LeyChile (BCN), ej. leychile.cl/navegar?idNorma=...
+    fecha_vigencia = Column(DateTime)   # fecha en que la ley entra en vigencia
 
     # Ordenado por fecha_deteccion (DateTime real, siempre poblada por el sistema al
     # detectar el evento) y no por fecha_evento (texto libre de formato variable según
@@ -76,11 +81,19 @@ def _migrar_columnas_faltantes():
     """Migración liviana para bases de datos SQLite creadas antes de agregar
     columnas nuevas al modelo. Base.metadata.create_all() solo crea tablas
     que no existen — no altera tablas ya existentes — así que hace falta
-    este paso manual para que id_externo aparezca en instalaciones previas."""
+    este paso manual para que las columnas nuevas aparezcan en instalaciones previas."""
     with engine.connect() as conn:
-        columnas = {fila[1] for fila in conn.exec_driver_sql("PRAGMA table_info(eventos)")}
-        if "id_externo" not in columnas:
+        columnas_eventos = {fila[1] for fila in conn.exec_driver_sql("PRAGMA table_info(eventos)")}
+        if "id_externo" not in columnas_eventos:
             conn.exec_driver_sql("ALTER TABLE eventos ADD COLUMN id_externo VARCHAR")
+            conn.commit()
+
+        columnas_proyectos = {fila[1] for fila in conn.exec_driver_sql("PRAGMA table_info(proyectos)")}
+        if "url_ley_publicada" not in columnas_proyectos:
+            conn.exec_driver_sql("ALTER TABLE proyectos ADD COLUMN url_ley_publicada VARCHAR")
+            conn.commit()
+        if "fecha_vigencia" not in columnas_proyectos:
+            conn.exec_driver_sql("ALTER TABLE proyectos ADD COLUMN fecha_vigencia DATETIME")
             conn.commit()
 
 

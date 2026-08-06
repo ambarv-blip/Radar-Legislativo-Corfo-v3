@@ -50,6 +50,8 @@ class ProyectoDetailOut(BaseModel):
     link_seguimiento: Optional[str] = None
     fecha_ultima_revision: Optional[datetime] = None
     ultimo_analisis_ia: Optional[str] = None
+    url_ley_publicada: Optional[str] = None
+    fecha_vigencia: Optional[datetime] = None
     eventos: List[EventoOut] = []
 
     class Config:

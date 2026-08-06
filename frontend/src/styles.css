@@ -142,9 +142,9 @@ main {
 
 /* Columna "Estado" — se actualiza periódicamente con el motor de monitoreo.
    Badges sólidos (no tonos pálidos) para maximizar el contraste entre etapas.
-   Escala: gris (primer trámite) -> azul (segundo trámite) -> ámbar (tercer
-   trámite / control de constitucionalidad) -> verde (aprobación presidencial)
-   -> dorado institucional (ley publicada / tramitación terminada). */
+   Escala: celeste (primer trámite) -> magenta (segundo trámite) -> naranjo
+   (tercer trámite / control de constitucionalidad) -> verde (aprobación
+   presidencial) -> verde oscuro (ley publicada / tramitación terminada). */
 .estado-pill {
   display: inline-block;
   padding: 5px 12px;
@@ -154,12 +154,12 @@ main {
   color: white;
 }
 
-.estado-pill.estado-inicial { background: #5b6b7a; }        /* Primer trámite — gris pizarra */
-.estado-pill.estado-intermedio { background: #14507e; }      /* Segundo trámite — azul institucional */
-.estado-pill.estado-avanzado { background: #c96b1b; }        /* Tercer trámite / control TC — ámbar */
-.estado-pill.estado-presidencial { background: #2f7d4f; }    /* Aprobación presidencial — verde */
-.estado-pill.estado-terminado { background: #4a9d6f; }       /* Ley publicada — verde más claro */
-.estado-pill.estado-sin-info { background: #9aa5ae; }
+.estado-pill.estado-inicial { background: #44B3E1; }        /* Primer trámite constitucional */
+.estado-pill.estado-intermedio { background: #D86DCD; }     /* Segundo trámite constitucional */
+.estado-pill.estado-avanzado { background: #FF9933; }       /* Tercer trámite / control TC */
+.estado-pill.estado-presidencial { background: #4EA72E; }   /* Trámite de aprobación presidencial */
+.estado-pill.estado-terminado { background: #196B24; }      /* Tramitación terminada — Ley publicada */
+.estado-pill.estado-sin-info { background: #9aa5ae; }        /* Sin clasificar */
 
 .tarjeta-proyecto {
   background: white;
@@ -307,6 +307,18 @@ main {
 .resultado-actualizacion.sin_cambios { background: #eef3f7; color: var(--texto); }
 .resultado-actualizacion.nuevo_evento { background: #fff4e5; color: #7a4a0d; }
 .resultado-actualizacion.error_tecnico { background: #fdeceb; color: #7a1f1a; }
+
+/* Alerta de vigencia — solo aparece cuando el proyecto tiene fecha_vigencia (ley ya
+   publicada). Tono verde consistente con estado-terminado. */
+.alerta-vigencia {
+  margin-top: 14px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #e8f5ea;
+  color: #196B24;
+}
+.alerta-vigencia a { color: var(--azul-claro); }
 
 .linea-tiempo {
   list-style: none;
