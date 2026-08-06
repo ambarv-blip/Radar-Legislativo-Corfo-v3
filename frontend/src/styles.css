@@ -194,7 +194,7 @@ main {
 .estado-pill.estado-inicial { background: #38A7BA; }        /* Primer trámite constitucional */
 .estado-pill.estado-intermedio { background: #9F9FFF; }     /* Segundo trámite constitucional */
 .estado-pill.estado-avanzado { background: #FD8983; }       /* Tercer trámite / control TC */
-.estado-pill.estado-presidencial { background: #69D1B3; }   /* Trámite de aprobación presidencial */
+.estado-pill.estado-presidencial { background: #39B994; }   /* Trámite de aprobación presidencial */
 .estado-pill.estado-terminado { background: #196B24; }      /* Tramitación terminada — Ley publicada */
 .estado-pill.estado-sin-info { background: #9AA5AE; }        /* Sin clasificar */
 
