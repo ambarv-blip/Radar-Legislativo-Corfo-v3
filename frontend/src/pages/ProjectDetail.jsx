@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { verProyecto, actualizarProyecto } from "../api";
+import { verProyecto } from "../api";
 
 function formatearFecha(iso) {
   if (!iso) return "Sin registro";
@@ -125,8 +125,6 @@ export default function ProjectDetail() {
   const [proyecto, setProyecto] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
-  const [actualizando, setActualizando] = useState(false);
-  const [resultado, setResultado] = useState(null);
 
   function cargar() {
     setCargando(true);
@@ -140,20 +138,6 @@ export default function ProjectDetail() {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-
-  async function handleActualizar() {
-    setActualizando(true);
-    setResultado(null);
-    try {
-      const r = await actualizarProyecto(id);
-      setResultado(r);
-      setProyecto(r.proyecto);
-    } catch (e) {
-      setResultado({ resultado: "error_tecnico", mensaje: e.message });
-    } finally {
-      setActualizando(false);
-    }
-  }
 
   if (cargando) return <p className="vacio">Cargando proyecto...</p>;
   if (error) return <p className="vacio">No se pudo conectar con el backend: {error}</p>;
@@ -212,21 +196,6 @@ export default function ProjectDetail() {
                 </a>
               </p>
             </div>
-          </div>
-        )}
-
-        <div style={{ marginTop: 20 }}>
-          <button className="btn-actualizar" onClick={handleActualizar} disabled={actualizando}>
-            {actualizando ? "Consultando fuente oficial..." : "Actualizar ahora"}
-          </button>
-        </div>
-
-        {resultado && (
-          <div className={`resultado-actualizacion ${resultado.resultado}`}>
-            {resultado.resultado === "sin_cambios" && "✓ "}
-            {resultado.resultado === "nuevo_evento" && "🔔 "}
-            {resultado.resultado === "error_tecnico" && "⚠ "}
-            {resultado.mensaje}
           </div>
         )}
       </div>
