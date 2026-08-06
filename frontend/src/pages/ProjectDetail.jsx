@@ -8,6 +8,42 @@ function formatearFecha(iso) {
   return d.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+// Misma escala de color que la tabla del Dashboard (ver estiloEstado en
+// Home.jsx) — se reutilizan las clases .estado-pill ya existentes en
+// styles.css para que la cápsula se vea idéntica en ambas vistas.
+function estiloEstado(estado) {
+  const e = (estado || "").toLowerCase();
+  if (e.includes("ley") || e.includes("promulg") || e.includes("public") || e.includes("terminada")) {
+    return { clase: "estado-pill estado-terminado", texto: estado };
+  }
+  if (e.includes("aprobación presidencial")) {
+    return { clase: "estado-pill estado-presidencial", texto: estado };
+  }
+  if (e.includes("tercer trámite") || e.includes("control de constitucionalidad")) {
+    return { clase: "estado-pill estado-avanzado", texto: estado };
+  }
+  if (e.includes("segundo trámite")) {
+    return { clase: "estado-pill estado-intermedio", texto: estado };
+  }
+  if (e.includes("primer trámite")) {
+    return { clase: "estado-pill estado-inicial", texto: estado };
+  }
+  return { clase: "estado-pill estado-sin-info", texto: estado || "Sin información" };
+}
+
+// Las votaciones individuales (Open Data) se guardan todas en la base de
+// datos para trazabilidad, pero inundan el timeline ejecutivo — un
+// proyecto con muchas votaciones el mismo día no debe tapar los hitos
+// reales de tramitación. El motor de monitoreo las etiqueta siempre con
+// este tipo_evento exacto (ver monitor/monitor_engine.py); cualquier otro
+// tipo de evento (cambios de estado, hitos históricos migrados) se
+// considera un hito legislativo y se muestra.
+const TIPO_EVENTO_VOTACION = "Votación registrada";
+
+function esHitoLegislativo(evento) {
+  return evento.tipo_evento !== TIPO_EVENTO_VOTACION;
+}
+
 const MESES_EVENTO = {
   ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5,
   jul: 6, ago: 7, sep: 8, oct: 9, nov: 10, dic: 11,
@@ -81,6 +117,9 @@ export default function ProjectDetail() {
   if (error) return <p className="vacio">No se pudo conectar con el backend: {error}</p>;
   if (!proyecto) return null;
 
+  const estado = estiloEstado(proyecto.estado_actual);
+  const hitos = ordenarEventosPorFecha(proyecto.eventos.filter(esHitoLegislativo));
+
   return (
     <>
       <Link to="/" className="volver">← Volver al listado</Link>
@@ -92,7 +131,7 @@ export default function ProjectDetail() {
         <div className="fila-detalle">
           <div className="campo">
             <label>Estado actual</label>
-            <p>{proyecto.estado_actual || "No disponible"}</p>
+            <p><span className={estado.clase}>{estado.texto}</span></p>
           </div>
           <div className="campo">
             <label>Prioridad de monitoreo</label>
@@ -157,10 +196,10 @@ export default function ProjectDetail() {
       </div>
 
       <div className="panel">
-        <h1 style={{ fontSize: 16 }}>Historial de eventos</h1>
-        {proyecto.eventos.length === 0 && <p className="vacio">Aún no hay eventos registrados.</p>}
+        <h1 style={{ fontSize: 16 }}>Hitos legislativos</h1>
+        {hitos.length === 0 && <p className="vacio">Aún no hay hitos legislativos registrados.</p>}
         <ul className="linea-tiempo">
-          {ordenarEventosPorFecha(proyecto.eventos).map((ev) => (
+          {hitos.map((ev) => (
             <li className="evento" key={ev.id}>
               <div className="fecha-evento">{ev.fecha_evento || "Fecha no disponible"}</div>
               <h4>{ev.tipo_evento || "Evento"}</h4>
