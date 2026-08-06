@@ -78,6 +78,48 @@ function ordenarEventosPorFecha(eventos) {
   });
 }
 
+// Fallback cuando un proyecto no tiene ningún hito con fecha cierta (caso
+// frecuente hoy: el HTML de camara.cl —única fuente que registra el
+// momento real de cambio de trámite— sigue bloqueado, y las fechas de
+// votación de Open Data NO son un proxy confiable de "cuándo entró a esa
+// etapa": una votación puede ocurrir semanas o meses después del cambio
+// real de trámite. Por eso NO se deriva ningún hito de trámite a partir
+// de votaciones (ni la primera ni la última).
+//
+// En su lugar se muestra un único elemento honesto: el Estado actual ya
+// conocido (mismo texto que la cápsula), fechado con la última
+// verificación real del Observatorio — nunca se presenta como "fecha de
+// ingreso a la etapa", se deja explícito en la descripción que es una
+// verificación. Preferible mostrar un solo hito honesto que varios
+// aproximados que puedan inducir a error.
+function hitoDeRespaldo(proyecto) {
+  if (!proyecto.estado_actual) return [];
+  return [{
+    id: "respaldo-estado-actual",
+    fecha_evento: formatearFecha(proyecto.fecha_ultima_revision),
+    tipo_evento: proyecto.estado_actual,
+    descripcion:
+      "Estado verificado por el Observatorio en esta fecha. Aún no se cuenta con la fecha exacta en que " +
+      "el proyecto ingresó a esta etapa — las fuentes oficiales disponibles hoy no la entregan con certeza. " +
+      "Para el detalle completo de la tramitación, revisa el enlace oficial de la Cámara.",
+    nivel_alerta: null,
+  }];
+}
+
+// Línea de tiempo ejecutiva — EN PAUSA. Toda la lógica de arriba
+// (esHitoLegislativo, ordenarEventosPorFecha, hitoDeRespaldo, etc.) se
+// mantiene intacta y lista para reactivarse: cuando el backend incorpore
+// una fuente oficial que entregue la fecha real de cada cambio de trámite
+// (Cámara sin bloqueo 403, BCN, Senado u otra equivalente), basta con
+// volver esta constante a `true` — no hace falta rediseñar nada.
+//
+// Motivo de la pausa: hoy ninguna fuente disponible entrega con certeza la
+// fecha en que un proyecto cambia de etapa legislativa. Mostrar fechas
+// derivadas de votaciones (que pueden ocurrir mucho después del cambio
+// real de trámite) induce a error, así que se prefiere mostrar un mensaje
+// explicativo antes que un timeline con fechas potencialmente engañosas.
+const TIMELINE_EJECUTIVO_HABILITADO = false;
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const [proyecto, setProyecto] = useState(null);
@@ -118,7 +160,8 @@ export default function ProjectDetail() {
   if (!proyecto) return null;
 
   const estado = estiloEstado(proyecto.estado_actual);
-  const hitos = ordenarEventosPorFecha(proyecto.eventos.filter(esHitoLegislativo));
+  const hitosDetectados = ordenarEventosPorFecha(proyecto.eventos.filter(esHitoLegislativo));
+  const hitos = hitosDetectados.length > 0 ? hitosDetectados : hitoDeRespaldo(proyecto);
 
   return (
     <>
@@ -196,23 +239,34 @@ export default function ProjectDetail() {
       </div>
 
       <div className="panel">
-        <h1 style={{ fontSize: 16 }}>Hitos legislativos</h1>
-        {hitos.length === 0 && <p className="vacio">Aún no hay hitos legislativos registrados.</p>}
-        <ul className="linea-tiempo">
-          {hitos.map((ev) => (
-            <li className="evento" key={ev.id}>
-              <div className="fecha-evento">{ev.fecha_evento || "Fecha no disponible"}</div>
-              <h4>{ev.tipo_evento || "Evento"}</h4>
-              <p>{ev.descripcion}</p>
-              {ev.nivel_alerta && (
-                <p style={{ marginTop: 4 }}>
-                  <strong>Nivel de alerta:</strong> {ev.nivel_alerta} · <strong>Revisión:</strong>{" "}
-                  {ev.estado_revision_humana}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+        <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>
+        {TIMELINE_EJECUTIVO_HABILITADO ? (
+          <>
+            {hitos.length === 0 && <p className="vacio">Aún no hay hitos legislativos registrados.</p>}
+            <ul className="linea-tiempo">
+              {hitos.map((ev) => (
+                <li className="evento" key={ev.id}>
+                  <div className="fecha-evento">{ev.fecha_evento || "Fecha no disponible"}</div>
+                  <h4>{ev.tipo_evento || "Evento"}</h4>
+                  <p>{ev.descripcion}</p>
+                  {ev.nivel_alerta && (
+                    <p style={{ marginTop: 4 }}>
+                      <strong>Nivel de alerta:</strong> {ev.nivel_alerta} · <strong>Revisión:</strong>{" "}
+                      {ev.estado_revision_humana}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p className="vacio">
+            La visualización ejecutiva del historial legislativo se encuentra temporalmente en desarrollo.
+            <br />
+            Mientras tanto, puedes consultar la historia legislativa oficial mediante el enlace de la Cámara de
+            Diputadas y Diputados disponible en esta ficha.
+          </p>
+        )}
       </div>
     </>
   );
