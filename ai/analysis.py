@@ -17,12 +17,19 @@ del Congreso, es una anotación propia del Observatorio.
 Si la llamada al modelo falla por cualquier motivo (sin API key, sin red,
 error del proveedor, respuesta no parseable), la función degrada con
 gracia: no lanza excepción y devuelve un payload neutro que la interfaz
-puede mostrar sin fingir que el análisis existe.
+puede mostrar sin fingir que el análisis existe. Cada una de esas causas
+queda registrada en el logger de este módulo (nivel WARNING/ERROR) — el
+payload neutro es indistinguible en la UI entre "no hay key", "falló la
+llamada" o "el modelo no encontró información", así que el detalle real
+solo se puede diagnosticar revisando los logs del backend.
 """
 import json
+import logging
 import os
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 MODELO = "claude-opus-5"
 
@@ -131,47 +138,73 @@ def generar_analisis_ejecutivo(proyecto) -> str:
     Nunca lanza excepción: ante cualquier falla (sin API key, sin red, error
     del proveedor, respuesta no parseable) devuelve un payload neutro con
     "No se encontró información suficiente para este apartado." en cada
-    bloque, para que la interfaz lo muestre sin fingir que el análisis existe."""
+    bloque, para que la interfaz lo muestre sin fingir que el análisis existe.
+    La causa real de cada falla queda en el logger de este módulo — ver el
+    docstring del módulo."""
     contexto = _construir_contexto_oficial(proyecto)
+    logger.info(
+        "[analisis-ia] boletín %s — contexto oficial construido (%d caracteres):\n%s",
+        proyecto.boletin, len(contexto), contexto,
+    )
     resultado = _respuesta_vacia()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.warning(
+            "[analisis-ia] boletín %s — ANTHROPIC_API_KEY no está definida en este proceso "
+            "(os.environ.get devolvió vacío/None): se devuelve el payload neutro SIN llamar al "
+            "modelo. Si acabas de configurar el Codespaces secret, tienes que reiniciar/reconstruir "
+            "el Codespace y volver a levantar uvicorn — un proceso ya corriendo no recoge variables "
+            "de entorno nuevas.",
+            proyecto.boletin,
+        )
         return json.dumps(resultado, ensure_ascii=False)
+    logger.info(
+        "[analisis-ia] boletín %s — ANTHROPIC_API_KEY detectada (%d caracteres, termina en ...%s)",
+        proyecto.boletin, len(api_key), api_key[-4:] if len(api_key) >= 4 else api_key,
+    )
+
+    mensaje_usuario = (
+        "Información oficial disponible sobre este proyecto de ley "
+        "(única fuente permitida para tu análisis):\n\n" + contexto
+    )
+    logger.info(
+        "[analisis-ia] boletín %s — SYSTEM PROMPT:\n%s\n\n[analisis-ia] boletín %s — USER PROMPT:\n%s",
+        proyecto.boletin, SYSTEM_PROMPT, proyecto.boletin, mensaje_usuario,
+    )
 
     try:
         client = anthropic.Anthropic()
         respuesta = client.messages.create(
             model=MODELO,
-            max_tokens=1500,
+            max_tokens=4000,
             system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Información oficial disponible sobre este proyecto de ley "
-                        "(única fuente permitida para tu análisis):\n\n" + contexto
-                    ),
-                }
-            ],
+            messages=[{"role": "user", "content": mensaje_usuario}],
             output_config={"format": {"type": "json_schema", "schema": ESQUEMA_ANALISIS["schema"]}},
+        )
+        logger.info(
+            "[analisis-ia] boletín %s — respuesta recibida: stop_reason=%s, tipos de bloque=%s",
+            proyecto.boletin, getattr(respuesta, "stop_reason", None),
+            [getattr(b, "type", None) for b in respuesta.content],
         )
         bloque_texto = "".join(
             bloque.text for bloque in respuesta.content if getattr(bloque, "type", None) == "text"
+        )
+        logger.info(
+            "[analisis-ia] boletín %s — texto crudo devuelto por Anthropic:\n%s",
+            proyecto.boletin, bloque_texto,
         )
         datos = json.loads(bloque_texto)
         for campo in CAMPOS_ANALISIS:
             if campo in datos:
                 resultado[campo] = datos[campo]
-    except (
-        anthropic.APIStatusError,
-        anthropic.APIConnectionError,
-        anthropic.AnthropicError,
-        json.JSONDecodeError,
-        KeyError,
-        ValueError,
-    ):
-        return json.dumps(_respuesta_vacia(), ensure_ascii=False)
-    except Exception:
+        logger.info("[analisis-ia] boletín %s — análisis generado y parseado correctamente", proyecto.boletin)
+    except Exception as e:
+        logger.error(
+            "[analisis-ia] boletín %s — FALLÓ la llamada/parseo: %s: %s. Se devuelve el payload "
+            "neutro. Revisa el traceback debajo para la causa exacta.",
+            proyecto.boletin, type(e).__name__, e, exc_info=True,
+        )
         return json.dumps(_respuesta_vacia(), ensure_ascii=False)
 
     return json.dumps(resultado, ensure_ascii=False)
