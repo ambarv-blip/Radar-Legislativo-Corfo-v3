@@ -53,6 +53,26 @@ def ver_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
     return proyecto
 
 
+@app.post("/api/proyectos/{proyecto_id}/analisis-ia", response_model=schemas.ProyectoDetailOut)
+def generar_analisis_ia_bajo_demanda(proyecto_id: int, db: Session = Depends(get_db)):
+    """Genera el Análisis Ejecutivo IA la primera vez que se solicita (típicamente
+    al abrir la ficha del proyecto en el frontend) y lo deja almacenado en
+    `ultimo_analisis_ia`. Si ya existe uno almacenado, lo devuelve tal cual sin
+    volver a llamar al modelo — la regeneración solo ocurre cuando cambia
+    información relevante del proyecto (ver actualizar_proyecto(), que limpia/
+    regenera este campo cuando detecta un evento nuevo o un cambio de estado)."""
+    proyecto = db.query(Proyecto).filter(Proyecto.id == proyecto_id).first()
+    if not proyecto:
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+    if not proyecto.ultimo_analisis_ia:
+        proyecto.ultimo_analisis_ia = generar_analisis_ejecutivo(proyecto)
+        db.commit()
+        db.refresh(proyecto)
+
+    return proyecto
+
+
 @app.post("/api/proyectos/{proyecto_id}/actualizar", response_model=schemas.ActualizarResultado)
 def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
     proyecto = db.query(Proyecto).filter(Proyecto.id == proyecto_id).first()

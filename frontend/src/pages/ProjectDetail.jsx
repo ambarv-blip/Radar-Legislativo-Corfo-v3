@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { verProyecto } from "../api";
+import { verProyecto, generarAnalisisIA } from "../api";
 
 function formatearFecha(iso) {
   if (!iso) return "Sin registro";
@@ -173,13 +173,41 @@ function parrafos(texto) {
     .filter(Boolean);
 }
 
-function AnalisisEjecutivoIA({ ultimoAnalisisIA }) {
+// Skeleton loader: se muestra mientras el backend genera el análisis por
+// primera vez (ver el efecto en ProjectDetail que llama a generarAnalisisIA).
+// Reproduce la silueta de los 6 bloques reales para que la tarjeta no salte
+// de tamaño cuando el análisis termine de llegar.
+function SkeletonAnalisisIA() {
+  return (
+    <div className="panel panel-analisis-ia">
+      <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+      <p className="analisis-ia-generando">🤖 Generando análisis ejecutivo...</p>
+      <div className="bloques-analisis-ia">
+        {BLOQUES_ANALISIS.map((bloque) => (
+          <div
+            key={bloque.clave}
+            className={`bloque-analisis-ia bloque-analisis-ia--skeleton${bloque.destacado ? " bloque-analisis-ia--destacado" : ""}`}
+          >
+            <div className="skeleton-linea skeleton-linea--titulo" />
+            <div className="skeleton-linea" />
+            <div className="skeleton-linea" />
+            <div className="skeleton-linea skeleton-linea--corta" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnalisisEjecutivoIA({ ultimoAnalisisIA, generando, errorGeneracion }) {
+  if (generando) return <SkeletonAnalisisIA />;
+
   if (!ultimoAnalisisIA) {
     return (
       <div className="panel panel-analisis-ia">
         <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
         <p className="placeholder-ia">
-          Aún no se ha generado un análisis IA para este proyecto — se generará automáticamente la próxima vez que se detecte un nuevo evento.
+          {errorGeneracion || "No fue posible generar el análisis ejecutivo en este momento."}
         </p>
       </div>
     );
@@ -252,6 +280,13 @@ export default function ProjectDetail() {
   const [proyecto, setProyecto] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
+  const [analisisGenerando, setAnalisisGenerando] = useState(false);
+  const [analisisError, setAnalisisError] = useState(null);
+  // Evita disparar la llamada dos veces para el mismo proyecto: React
+  // StrictMode (desarrollo) invoca los efectos dos veces al montar, y sin
+  // este guard se pedían dos análisis a la vez (dos llamadas reales a la
+  // API de Claude) la primera vez que se abre una ficha.
+  const analisisSolicitadoParaId = useRef(null);
 
   function cargar() {
     setCargando(true);
@@ -265,6 +300,42 @@ export default function ProjectDetail() {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // El Análisis Ejecutivo IA ya no depende de que se detecte un evento nuevo:
+  // se genera la primera vez que se abre la ficha (si el proyecto todavía no
+  // tiene uno almacenado) y queda guardado, así que en las siguientes visitas
+  // no se vuelve a pedir. Mientras se genera, el panel muestra un skeleton
+  // loader en vez del antiguo mensaje "Aún no se ha generado...".
+  useEffect(() => {
+    if (!proyecto || proyecto.ultimo_analisis_ia) return;
+    if (analisisSolicitadoParaId.current === proyecto.id) return;
+    analisisSolicitadoParaId.current = proyecto.id;
+    let cancelado = false;
+    setAnalisisError(null);
+    setAnalisisGenerando(true);
+    generarAnalisisIA(proyecto.id)
+      .then((actualizado) => {
+        if (!cancelado) setProyecto(actualizado);
+      })
+      .catch((e) => {
+        if (!cancelado) setAnalisisError(e.message);
+      })
+      .finally(() => {
+        if (!cancelado) setAnalisisGenerando(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+    // Deps por valor primitivo (id, ultimo_analisis_ia), no por identidad de
+    // `proyecto`: `cargar()` puede resolver más de una vez para el mismo
+    // proyecto (p. ej. en desarrollo, StrictMode invoca sus efectos dos
+    // veces) y cada resolución entrega un objeto `proyecto` distinto aunque
+    // representen el mismo estado. Si este efecto dependiera del objeto
+    // completo, esa segunda referencia dispararía su cleanup a mitad de la
+    // generación, descartando el resultado en curso y dejando el skeleton
+    // cargando para siempre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proyecto?.id, proyecto?.ultimo_analisis_ia]);
 
   if (cargando) return <p className="vacio">Cargando proyecto...</p>;
   if (error) {
@@ -361,7 +432,11 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      <AnalisisEjecutivoIA ultimoAnalisisIA={proyecto.ultimo_analisis_ia} />
+      <AnalisisEjecutivoIA
+        ultimoAnalisisIA={proyecto.ultimo_analisis_ia}
+        generando={analisisGenerando}
+        errorGeneracion={analisisError}
+      />
 
       <div className="panel">
         <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>

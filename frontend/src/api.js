@@ -77,3 +77,10 @@ export async function verProyecto(id) {
 export async function actualizarProyecto(id) {
   return request(`/proyectos/${id}/actualizar`, { method: "POST" });
 }
+
+// Genera el Análisis Ejecutivo IA la primera vez que se abre la ficha (si aún
+// no existe uno almacenado); si ya existe, el backend lo devuelve tal cual sin
+// volver a llamar al modelo. Devuelve el proyecto completo actualizado.
+export async function generarAnalisisIA(id) {
+  return request(`/proyectos/${id}/analisis-ia`, { method: "POST" });
+}
