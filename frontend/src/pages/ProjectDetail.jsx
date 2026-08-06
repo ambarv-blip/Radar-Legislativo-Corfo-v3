@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { verProyecto } from "../api";
+import { verProyecto, generarAnalisisIA } from "../api";
 
 function formatearFecha(iso) {
   if (!iso) return "Sin registro";
@@ -153,11 +153,140 @@ function hitoDeRespaldo(proyecto) {
 // explicativo antes que un timeline con fechas potencialmente engañosas.
 const TIMELINE_EJECUTIVO_HABILITADO = false;
 
+// Los 6 bloques del Análisis Ejecutivo IA, en el orden fijo definido para la
+// funcionalidad. `lista: true` marca el único bloque que se muestra como
+// viñetas (aspectos_principales); `destacado: true` marca el bloque de
+// implicancias para Corfo, el más relevante para la decisión ejecutiva.
+const BLOQUES_ANALISIS = [
+  { clave: "objetivo", icono: "🎯", titulo: "Objetivo del proyecto" },
+  { clave: "problema", icono: "⚠️", titulo: "¿Qué problema busca resolver?" },
+  { clave: "aspectos_principales", icono: "📌", titulo: "Aspectos principales", lista: true },
+  { clave: "implicancias_corfo", icono: "🏛", titulo: "Posibles implicancias para Corfo", destacado: true },
+  { clave: "estado_debate", icono: "💬", titulo: "Estado del debate legislativo" },
+  { clave: "conclusion", icono: "🧠", titulo: "Conclusión Ejecutiva" },
+];
+
+function parrafos(texto) {
+  return String(texto || "")
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+// Skeleton loader: se muestra mientras el backend genera el análisis por
+// primera vez (ver el efecto en ProjectDetail que llama a generarAnalisisIA).
+// Reproduce la silueta de los 6 bloques reales para que la tarjeta no salte
+// de tamaño cuando el análisis termine de llegar.
+function SkeletonAnalisisIA() {
+  return (
+    <div className="panel panel-analisis-ia">
+      <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+      <p className="analisis-ia-generando">🤖 Generando análisis ejecutivo...</p>
+      <div className="bloques-analisis-ia">
+        {BLOQUES_ANALISIS.map((bloque) => (
+          <div
+            key={bloque.clave}
+            className={`bloque-analisis-ia bloque-analisis-ia--skeleton${bloque.destacado ? " bloque-analisis-ia--destacado" : ""}`}
+          >
+            <div className="skeleton-linea skeleton-linea--titulo" />
+            <div className="skeleton-linea" />
+            <div className="skeleton-linea" />
+            <div className="skeleton-linea skeleton-linea--corta" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnalisisEjecutivoIA({ ultimoAnalisisIA, generando, errorGeneracion }) {
+  if (generando) return <SkeletonAnalisisIA />;
+
+  if (!ultimoAnalisisIA) {
+    return (
+      <div className="panel panel-analisis-ia">
+        <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+        <p className="placeholder-ia">
+          {errorGeneracion || "No fue posible generar el análisis ejecutivo en este momento."}
+        </p>
+      </div>
+    );
+  }
+
+  let analisis;
+  try {
+    analisis = JSON.parse(ultimoAnalisisIA);
+  } catch {
+    // Compatibilidad con análisis antiguos guardados como texto plano (placeholder).
+    return (
+      <div className="panel panel-analisis-ia">
+        <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+        <p className="placeholder-ia">{ultimoAnalisisIA}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel panel-analisis-ia">
+      <h1 style={{ fontSize: 16 }}>🤖 Análisis Ejecutivo IA</h1>
+
+      <div className="disclaimer-ia">
+        <span aria-hidden="true">ℹ️</span>
+        <p>
+          Este análisis fue generado automáticamente mediante inteligencia artificial utilizando
+          exclusivamente información oficial disponible en la plataforma del Congreso Nacional. Su
+          propósito es apoyar el análisis ejecutivo y no reemplaza la revisión de las fuentes oficiales.
+        </p>
+      </div>
+
+      <div className="bloques-analisis-ia">
+        {BLOQUES_ANALISIS.map((bloque) => {
+          const valor = analisis[bloque.clave];
+          return (
+            <div
+              key={bloque.clave}
+              className={`bloque-analisis-ia${bloque.destacado ? " bloque-analisis-ia--destacado" : ""}`}
+            >
+              <h2>
+                <span aria-hidden="true">{bloque.icono}</span> {bloque.titulo}
+              </h2>
+              {bloque.lista ? (
+                Array.isArray(valor) && valor.length > 0 ? (
+                  <ul>
+                    {valor.map((item, i) => (
+                      <li key={i}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="sin-informacion-ia">No se encontró información suficiente para este apartado.</p>
+                )
+              ) : (
+                parrafos(valor).map((p, i) => (
+                  <p key={i} className={p === "No se encontró información suficiente para este apartado." ? "sin-informacion-ia" : undefined}>
+                    {p}
+                  </p>
+                ))
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const [proyecto, setProyecto] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
+  const [analisisGenerando, setAnalisisGenerando] = useState(false);
+  const [analisisError, setAnalisisError] = useState(null);
+  // Evita disparar la llamada dos veces para el mismo proyecto: React
+  // StrictMode (desarrollo) invoca los efectos dos veces al montar, y sin
+  // este guard se pedían dos análisis a la vez (dos llamadas reales a la
+  // API de Claude) la primera vez que se abre una ficha.
+  const analisisSolicitadoParaId = useRef(null);
 
   function cargar() {
     setCargando(true);
@@ -171,6 +300,42 @@ export default function ProjectDetail() {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // El Análisis Ejecutivo IA ya no depende de que se detecte un evento nuevo:
+  // se genera la primera vez que se abre la ficha (si el proyecto todavía no
+  // tiene uno almacenado) y queda guardado, así que en las siguientes visitas
+  // no se vuelve a pedir. Mientras se genera, el panel muestra un skeleton
+  // loader en vez del antiguo mensaje "Aún no se ha generado...".
+  useEffect(() => {
+    if (!proyecto || proyecto.ultimo_analisis_ia) return;
+    if (analisisSolicitadoParaId.current === proyecto.id) return;
+    analisisSolicitadoParaId.current = proyecto.id;
+    let cancelado = false;
+    setAnalisisError(null);
+    setAnalisisGenerando(true);
+    generarAnalisisIA(proyecto.id)
+      .then((actualizado) => {
+        if (!cancelado) setProyecto(actualizado);
+      })
+      .catch((e) => {
+        if (!cancelado) setAnalisisError(e.message);
+      })
+      .finally(() => {
+        if (!cancelado) setAnalisisGenerando(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+    // Deps por valor primitivo (id, ultimo_analisis_ia), no por identidad de
+    // `proyecto`: `cargar()` puede resolver más de una vez para el mismo
+    // proyecto (p. ej. en desarrollo, StrictMode invoca sus efectos dos
+    // veces) y cada resolución entrega un objeto `proyecto` distinto aunque
+    // representen el mismo estado. Si este efecto dependiera del objeto
+    // completo, esa segunda referencia dispararía su cleanup a mitad de la
+    // generación, descartando el resultado en curso y dejando el skeleton
+    // cargando para siempre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proyecto?.id, proyecto?.ultimo_analisis_ia]);
 
   if (cargando) return <p className="vacio">Cargando proyecto...</p>;
   if (error) {
@@ -267,12 +432,11 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      <div className="panel">
-        <h1 style={{ fontSize: 16 }}>Último análisis IA</h1>
-        <p className="placeholder-ia">
-          {proyecto.ultimo_analisis_ia || "Aún no se ha generado un análisis IA para este proyecto — se generará automáticamente la próxima vez que se detecte un nuevo evento."}
-        </p>
-      </div>
+      <AnalisisEjecutivoIA
+        ultimoAnalisisIA={proyecto.ultimo_analisis_ia}
+        generando={analisisGenerando}
+        errorGeneracion={analisisError}
+      />
 
       <div className="panel">
         <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>

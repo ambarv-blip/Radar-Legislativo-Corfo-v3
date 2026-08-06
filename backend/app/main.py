@@ -21,7 +21,7 @@ from typing import List
 from app.database import init_db, get_db, Proyecto, Evento
 from app import schemas
 from monitor.monitor_engine import ejecutar_monitoreo
-from ai.analysis import generar_analisis_placeholder
+from ai.analysis import generar_analisis_ejecutivo
 
 app = FastAPI(title="Observatorio Legislativo Estratégico Corfo", version="0.1.0")
 
@@ -50,6 +50,26 @@ def ver_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
     proyecto = db.query(Proyecto).filter(Proyecto.id == proyecto_id).first()
     if not proyecto:
         raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    return proyecto
+
+
+@app.post("/api/proyectos/{proyecto_id}/analisis-ia", response_model=schemas.ProyectoDetailOut)
+def generar_analisis_ia_bajo_demanda(proyecto_id: int, db: Session = Depends(get_db)):
+    """Genera el Análisis Ejecutivo IA la primera vez que se solicita (típicamente
+    al abrir la ficha del proyecto en el frontend) y lo deja almacenado en
+    `ultimo_analisis_ia`. Si ya existe uno almacenado, lo devuelve tal cual sin
+    volver a llamar al modelo — la regeneración solo ocurre cuando cambia
+    información relevante del proyecto (ver actualizar_proyecto(), que limpia/
+    regenera este campo cuando detecta un evento nuevo o un cambio de estado)."""
+    proyecto = db.query(Proyecto).filter(Proyecto.id == proyecto_id).first()
+    if not proyecto:
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+    if not proyecto.ultimo_analisis_ia:
+        proyecto.ultimo_analisis_ia = generar_analisis_ejecutivo(proyecto)
+        db.commit()
+        db.refresh(proyecto)
+
     return proyecto
 
 
@@ -93,8 +113,13 @@ def actualizar_proyecto(proyecto_id: int, db: Session = Depends(get_db)):
     if resultado["estado_nuevo"]:
         proyecto.estado_actual = resultado["estado_nuevo"]
 
-    ultima_descripcion = eventos_nuevos[-1]["descripcion"]
-    proyecto.ultimo_analisis_ia = generar_analisis_placeholder(proyecto.nombre, ultima_descripcion)
+    db.commit()
+    db.refresh(proyecto)
+
+    # Se genera después del commit/refresh para que el historial de eventos
+    # que recibe el análisis (proyecto.eventos) incluya los eventos recién
+    # detectados, no solo los previos.
+    proyecto.ultimo_analisis_ia = generar_analisis_ejecutivo(proyecto)
     db.commit()
     db.refresh(proyecto)
 
