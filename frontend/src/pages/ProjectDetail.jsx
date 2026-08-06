@@ -8,6 +8,40 @@ function formatearFecha(iso) {
   return d.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+const MESES_EVENTO = {
+  ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5,
+  jul: 6, ago: 7, sep: 8, oct: 9, nov: 10, dic: 11,
+};
+
+// Los eventos guardan su fecha real como texto libre (ej. "9 Jul. 2024"),
+// tal como la entrega la fuente oficial — no es un ISO ordenable directamente.
+// Se parsea solo para poder ordenar el timeline de más reciente a más
+// antiguo; si no calza el formato esperado, se devuelve null y ese evento
+// conserva el orden que ya trae el backend (ver ordenarEventosPorFecha).
+function parsearFechaEvento(fechaTexto) {
+  if (!fechaTexto) return null;
+  const m = fechaTexto.match(/(\d{1,2})\s+([a-zA-Záéíóú]{3,})\.?\s+(\d{4})/i);
+  if (!m) return null;
+  const mesIdx = MESES_EVENTO[m[2].toLowerCase().slice(0, 3)];
+  if (mesIdx === undefined) return null;
+  return new Date(Number(m[3]), mesIdx, Number(m[1])).getTime();
+}
+
+// Ordena de más reciente a más antiguo por la fecha real del evento
+// (fecha_evento), no por cuándo el sistema lo detectó. Sort estable: los
+// eventos sin fecha parseable no se pierden, quedan en el orden relativo
+// que ya traía el backend.
+function ordenarEventosPorFecha(eventos) {
+  return [...eventos].sort((a, b) => {
+    const fa = parsearFechaEvento(a.fecha_evento);
+    const fb = parsearFechaEvento(b.fecha_evento);
+    if (fa !== null && fb !== null) return fb - fa;
+    if (fa !== null) return -1;
+    if (fb !== null) return 1;
+    return 0;
+  });
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const [proyecto, setProyecto] = useState(null);
@@ -126,7 +160,7 @@ export default function ProjectDetail() {
         <h1 style={{ fontSize: 16 }}>Historial de eventos</h1>
         {proyecto.eventos.length === 0 && <p className="vacio">Aún no hay eventos registrados.</p>}
         <ul className="linea-tiempo">
-          {proyecto.eventos.map((ev) => (
+          {ordenarEventosPorFecha(proyecto.eventos).map((ev) => (
             <li className="evento" key={ev.id}>
               <div className="fecha-evento">{ev.fecha_evento || "Fecha no disponible"}</div>
               <h4>{ev.tipo_evento || "Evento"}</h4>
