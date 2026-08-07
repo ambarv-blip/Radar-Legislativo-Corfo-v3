@@ -440,7 +440,16 @@ def extraer_actuaciones_html(html):
     # (no se pierden, no se inventa una fecha para ordenarlas).
     filas_con_fecha = [(f, _parsear_fecha_actuacion(f["fecha"])) for f in filas]
     filas_con_fecha.sort(key=lambda par: (par[1] is None, par[1] or datetime.date.min))
-    return [f for f, _fecha in filas_con_fecha]
+    resultado_final = [f for f, _fecha in filas_con_fecha]
+
+    # --- LOGGING TEMPORAL DE AUDITORÍA — quitar después de probar AFIDE ---
+    logger.info(
+        "[AUDITORIA TEMPORAL] Filas HTML encontradas: %d | Actuaciones extraídas: %d",
+        len(filas_html), len(resultado_final),
+    )
+    # --- FIN LOGGING TEMPORAL ---
+
+    return resultado_final
 
 
 # =====================================================================
@@ -704,10 +713,13 @@ def ejecutar_monitoreo(boletin, prm_id, estado_actual_guardado, ids_externos_exi
     # "html-etapa-", distinto del "html-estado-" del punto 3) para que
     # actualizaciones futuras no vuelvan a crear los mismos hitos.
     etapa_anterior = None
+    _auditoria_construidos = 0  # LOGGING TEMPORAL — quitar después de probar AFIDE
+    _auditoria_repetidos = 0    # LOGGING TEMPORAL — quitar después de probar AFIDE
     for fila in actuaciones_html:
         etapa_actual = (fila.get("etapa") or "").strip()
         if not etapa_actual or etapa_actual == etapa_anterior:
             continue
+        _auditoria_construidos += 1  # LOGGING TEMPORAL
         id_externo_etapa = f"html-etapa-{boletin}-{fila.get('fecha')}-{etapa_actual}"[:250]
         if id_externo_etapa not in ids_externos_existentes:
             eventos_nuevos.append({
@@ -722,7 +734,20 @@ def ejecutar_monitoreo(boletin, prm_id, estado_actual_guardado, ids_externos_exi
                 "enlace": html["url_consultada"],
                 "nivel_alerta": "Informativa" if etapa_anterior is None else "Media",
             })
+        else:
+            _auditoria_repetidos += 1  # LOGGING TEMPORAL
         etapa_anterior = etapa_actual
+
+    # --- LOGGING TEMPORAL DE AUDITORÍA — quitar después de probar AFIDE ---
+    logger.info(
+        "[AUDITORIA TEMPORAL] Eventos construidos: %d | Eventos nuevos insertados: %d | "
+        "Eventos repetidos: %d | Estado final: %s",
+        _auditoria_construidos,
+        _auditoria_construidos - _auditoria_repetidos,
+        _auditoria_repetidos,
+        estado_html,
+    )
+    # --- FIN LOGGING TEMPORAL ---
 
     # 3) Cambio de Estado (HTML, "Estado" resumen) — la única fuente que
     # sabe con certeza cuál es el estado VIGENTE ahora mismo; sigue
