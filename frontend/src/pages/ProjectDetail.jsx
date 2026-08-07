@@ -64,19 +64,6 @@ function estiloEstado(estado) {
   return { clase: "estado-pill estado-sin-info", texto: estado || "Sin información" };
 }
 
-// Las votaciones individuales (Open Data) se guardan todas en la base de
-// datos para trazabilidad, pero inundan el timeline ejecutivo — un
-// proyecto con muchas votaciones el mismo día no debe tapar los hitos
-// reales de tramitación. El motor de monitoreo las etiqueta siempre con
-// este tipo_evento exacto (ver monitor/monitor_engine.py); cualquier otro
-// tipo de evento (cambios de estado, hitos históricos migrados) se
-// considera un hito legislativo y se muestra.
-const TIPO_EVENTO_VOTACION = "Votación registrada";
-
-function esHitoLegislativo(evento) {
-  return evento.tipo_evento !== TIPO_EVENTO_VOTACION;
-}
-
 const MESES_EVENTO = {
   ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5,
   jul: 6, ago: 7, sep: 8, oct: 9, nov: 10, dic: 11,
@@ -111,47 +98,72 @@ function ordenarEventosPorFecha(eventos) {
   });
 }
 
-// Fallback cuando un proyecto no tiene ningún hito con fecha cierta (caso
-// frecuente hoy: el HTML de camara.cl —única fuente que registra el
-// momento real de cambio de trámite— sigue bloqueado, y las fechas de
-// votación de Open Data NO son un proxy confiable de "cuándo entró a esa
-// etapa": una votación puede ocurrir semanas o meses después del cambio
-// real de trámite. Por eso NO se deriva ningún hito de trámite a partir
-// de votaciones (ni la primera ni la última).
-//
-// En su lugar se muestra un único elemento honesto: el Estado actual ya
-// conocido (mismo texto que la cápsula), fechado con la última
-// verificación real del Observatorio — nunca se presenta como "fecha de
-// ingreso a la etapa", se deja explícito en la descripción que es una
-// verificación. Preferible mostrar un solo hito honesto que varios
-// aproximados que puedan inducir a error.
-function hitoDeRespaldo(proyecto) {
-  if (!proyecto.estado_actual) return [];
-  return [{
-    id: "respaldo-estado-actual",
-    fecha_evento: formatearFecha(proyecto.fecha_ultima_revision),
-    tipo_evento: proyecto.estado_actual,
-    descripcion:
-      "Estado verificado por el Observatorio en esta fecha. Aún no se cuenta con la fecha exacta en que " +
-      "el proyecto ingresó a esta etapa — las fuentes oficiales disponibles hoy no la entregan con certeza. " +
-      "Para el detalle completo de la tramitación, revisa el enlace oficial de la Cámara.",
-    nivel_alerta: null,
-  }];
+// Deduplica eventos idénticos (misma fecha oficial + mismo tipo + misma
+// descripción) — defensivo: el motor de monitoreo ya deduplica votaciones y
+// cambios de estado por id_externo antes de insertarlos, pero eventos
+// históricos migrados o cargados a mano (POST /api/eventos) no pasan por
+// esa protección.
+function deduplicarEventos(eventos) {
+  const vistos = new Set();
+  return eventos.filter((ev) => {
+    const clave = `${ev.fecha_evento || ""}|${ev.tipo_evento || ""}|${ev.descripcion || ""}`;
+    if (vistos.has(clave)) return false;
+    vistos.add(clave);
+    return true;
+  });
 }
 
-// Línea de tiempo ejecutiva — EN PAUSA. Toda la lógica de arriba
-// (esHitoLegislativo, ordenarEventosPorFecha, hitoDeRespaldo, etc.) se
-// mantiene intacta y lista para reactivarse: cuando el backend incorpore
-// una fuente oficial que entregue la fecha real de cada cambio de trámite
-// (Cámara sin bloqueo 403, BCN, Senado u otra equivalente), basta con
-// volver esta constante a `true` — no hace falta rediseñar nada.
-//
-// Motivo de la pausa: hoy ninguna fuente disponible entrega con certeza la
-// fecha en que un proyecto cambia de etapa legislativa. Mostrar fechas
-// derivadas de votaciones (que pueden ocurrir mucho después del cambio
-// real de trámite) induce a error, así que se prefiere mostrar un mensaje
-// explicativo antes que un timeline con fechas potencialmente engañosas.
-const TIMELINE_EJECUTIVO_HABILITADO = false;
+// Un evento sin tipo, sin descripción y sin cambio de estado no aporta nada
+// a la línea de tiempo — se descarta en vez de mostrar una fila vacía. Con
+// los datos reales de hoy esto no ocurre; es una protección para datos
+// futuros cargados manualmente o por una fuente nueva.
+function esEventoRelevante(evento) {
+  return Boolean(evento.tipo_evento || evento.descripcion || evento.estado_nuevo);
+}
+
+// Ícono según el tipo de evento — coincide con el vocabulario que ya usan
+// tanto los eventos históricos migrados ("Ingreso de proyecto", "Votación
+// en comisión", "Aprobación", "Promulgación y Publicación") como el motor
+// de monitoreo en vivo ("Votación registrada", "Cambio de estado (detectado
+// por el Observatorio)") — no requiere tocar monitor_engine.py.
+function iconoEvento(tipoEvento) {
+  const t = (tipoEvento || "").toLowerCase();
+  if (t.includes("ingreso")) return "📥";
+  if (t.includes("votaci")) return "🗳️";
+  if (t.includes("promulgaci") || t.includes("publicaci")) return "📜";
+  if (t.includes("aprobaci")) return "✅";
+  if (t.includes("cambio de estado")) return "🔄";
+  return "📌";
+}
+
+// El estado "nuevo" que declara un evento, pero solo si realmente es una
+// etapa distinta a la anterior. Una votación dentro de la misma etapa (ej.
+// AFIDE, 10 Dic. 2025: estado_anterior === estado_nuevo === "Segundo
+// trámite constitucional") no es un cambio de etapa — no debe repetirse la
+// misma cápsula de estado sin motivo (ver punto 3 del pedido).
+function estadoNuevoDeclarado(evento) {
+  if (!evento.estado_nuevo) return null;
+  if (evento.estado_anterior && evento.estado_anterior.trim() === evento.estado_nuevo.trim()) {
+    return null;
+  }
+  return evento.estado_nuevo;
+}
+
+// Extrae "Ley N° 21.813" de un texto oficial (estado_actual o la
+// descripción de un evento de promulgación) — nunca se inventa un número:
+// si el texto no lo trae, no se muestra.
+function extraerNumeroLey(texto) {
+  const m = (texto || "").match(/Ley N°\s*[\d.]+/i);
+  return m ? m[0] : null;
+}
+
+// Mismo criterio que esLeyVigente() en Home.jsx (no se importa para no
+// acoplar ambas páginas — Home.jsx no la exporta — pero es la misma regla:
+// "Tramitación terminada" o un estado que ya trae "Ley N°").
+function proyectoEsLeyPublicada(estado) {
+  const e = (estado || "").toLowerCase();
+  return e.includes("tramitación terminada") || e.includes("ley n°");
+}
 
 // Bandera de activación del Análisis Ejecutivo IA — EN PAUSA para la versión
 // demo. Todo el código (componente, endpoint, prompt, backend) queda intacto
@@ -360,8 +372,32 @@ export default function ProjectDetail() {
   if (!proyecto) return null;
 
   const estado = estiloEstado(proyecto.estado_actual);
-  const hitosDetectados = ordenarEventosPorFecha(proyecto.eventos.filter(esHitoLegislativo));
-  const hitos = hitosDetectados.length > 0 ? hitosDetectados : hitoDeRespaldo(proyecto);
+
+  // Pipeline de la línea de tiempo: descarta ruido -> elimina duplicados ->
+  // ordena de más reciente a más antiguo por la fecha real del evento
+  // (nunca por orden de inserción).
+  const eventosTimeline = ordenarEventosPorFecha(
+    deduplicarEventos(proyecto.eventos.filter(esEventoRelevante))
+  );
+
+  // "Lo que dice la línea de tiempo" es el estado_nuevo del evento más
+  // reciente que efectivamente declara uno — incluida una votación que
+  // confirma la misma etapa (a diferencia de estadoNuevoDeclarado(), que se
+  // usa solo para decidir si UN evento puntual merece su propia cápsula).
+  // Se compara contra proyecto.estado_actual: si difieren, es una
+  // inconsistencia real entre la ficha y su propio historial, y se muestra
+  // explícitamente en vez de ocultarla o de adivinar cuál de los dos vale.
+  const ultimoEventoConEstado = eventosTimeline.find((ev) => ev.estado_nuevo);
+  const estadoInconsistente =
+    ultimoEventoConEstado &&
+    proyecto.estado_actual &&
+    ultimoEventoConEstado.estado_nuevo.trim() !== proyecto.estado_actual.trim();
+
+  const esLeyPublicada = proyectoEsLeyPublicada(proyecto.estado_actual);
+  const numeroLey =
+    extraerNumeroLey(proyecto.estado_actual) ||
+    extraerNumeroLey(eventosTimeline.map((ev) => ev.descripcion).join(" "));
+  const eventoPublicacion = eventosTimeline.find((ev) => /promulgaci|publicaci/i.test(ev.tipo_evento || ""));
 
   return (
     <>
@@ -452,32 +488,69 @@ export default function ProjectDetail() {
 
       <div className="panel">
         <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>
-        {TIMELINE_EJECUTIVO_HABILITADO ? (
-          <>
-            {hitos.length === 0 && <p className="vacio">Aún no hay hitos legislativos registrados.</p>}
-            <ul className="linea-tiempo">
-              {hitos.map((ev) => (
+
+        {estadoInconsistente && (
+          <p className="alerta-inconsistencia">
+            ⚠ El estado actual de la ficha (<strong>{proyecto.estado_actual}</strong>) no coincide con el
+            último estado registrado en la línea de tiempo (<strong>{ultimoEventoConEstado.estado_nuevo}</strong>).
+            Revisa el historial de eventos de este proyecto.
+          </p>
+        )}
+
+        {eventosTimeline.length === 0 && !esLeyPublicada && (
+          <p className="vacio">Aún no hay eventos oficiales registrados para este proyecto.</p>
+        )}
+
+        {(eventosTimeline.length > 0 || esLeyPublicada) && (
+          <ul className="linea-tiempo">
+            {eventosTimeline.map((ev) => {
+              const estadoNuevo = estadoNuevoDeclarado(ev);
+              return (
                 <li className="evento" key={ev.id}>
-                  <div className="fecha-evento">{ev.fecha_evento || "Fecha no disponible"}</div>
+                  <div className="fecha-evento">
+                    <span aria-hidden="true">{iconoEvento(ev.tipo_evento)}</span>{" "}
+                    {ev.fecha_evento || "Fecha no disponible"}
+                  </div>
                   <h4>{ev.tipo_evento || "Evento"}</h4>
-                  <p>{ev.descripcion}</p>
+                  {ev.descripcion && <p>{ev.descripcion}</p>}
+                  {estadoNuevo && (
+                    <p className="evento-cambio-etapa">
+                      {ev.estado_anterior ? "Cambió de etapa → " : "Etapa: "}
+                      <span className={estiloEstado(estadoNuevo).clase}>{estiloEstado(estadoNuevo).texto}</span>
+                    </p>
+                  )}
                   {ev.nivel_alerta && (
-                    <p style={{ marginTop: 4 }}>
-                      <strong>Nivel de alerta:</strong> {ev.nivel_alerta} · <strong>Revisión:</strong>{" "}
-                      {ev.estado_revision_humana}
+                    <p className="evento-meta">
+                      Nivel de alerta: {ev.nivel_alerta} · Revisión: {ev.estado_revision_humana}
                     </p>
                   )}
                 </li>
-              ))}
-            </ul>
-          </>
-        ) : (
-          <p className="vacio">
-            La visualización ejecutiva del historial legislativo se encuentra temporalmente en desarrollo.
-            <br />
-            Mientras tanto, puedes consultar la historia legislativa oficial mediante el enlace de la Cámara de
-            Diputadas y Diputados disponible en esta ficha.
-          </p>
+              );
+            })}
+
+            {esLeyPublicada && (
+              <li className="evento evento-ley-publicada" key="ley-publicada">
+                <div className="fecha-evento">
+                  <span aria-hidden="true">✅</span>{" "}
+                  {eventoPublicacion?.fecha_evento || "Fecha de publicación no disponible"}
+                </div>
+                <h4>Ley publicada</h4>
+                {numeroLey && <p>{numeroLey}</p>}
+                {proyecto.url_ley_publicada && (
+                  <p>
+                    <a
+                      href={proyecto.url_ley_publicada}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="link-boletin"
+                    >
+                      Ver en Ley Chile ↗
+                    </a>
+                  </p>
+                )}
+              </li>
+            )}
+          </ul>
         )}
       </div>
     </>
