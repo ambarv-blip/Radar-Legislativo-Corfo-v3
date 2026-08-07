@@ -33,13 +33,16 @@ las dos fuentes bloquea a la otra — si una falla, la otra sigue aportando.
 
 - `extraer_actuaciones_html()`: la tabla de tramitación del HTML trae la
   secuencia COMPLETA de actuaciones oficiales (Fecha, Sesión, Etapa,
-  Sub-etapa), no solo la más reciente. Hasta esta revisión, el código
-  (entonces extraer_ultima_actuacion()) descartaba todas las filas menos la
-  última — causa raíz de que varios proyectos mostraran el historial vacío
-  o incompleto pese a que la fuente oficial sí traía su evolución completa.
-  ejecutar_monitoreo() ahora reconstruye la secuencia entera de cambios de
-  etapa a partir de esta lista, además de (no en reemplazo de) el mecanismo
-  existente que compara el "Estado" resumen contra el guardado.
+  Sub-etapa), no solo la más reciente. Hasta una revisión anterior, el
+  código (entonces extraer_ultima_actuacion()) descartaba todas las filas
+  menos la última. ejecutar_monitoreo() reconstruye la secuencia entera de
+  cambios de etapa a partir de esta lista, además de (no en reemplazo de)
+  el mecanismo existente que compara el "Estado" resumen contra el
+  guardado. Implementada con BeautifulSoup + lxml (no regex sobre el HTML
+  crudo): un parser de árbol DOM real tolera anidamiento, atributos y
+  variaciones de formato que un regex fijo no maneja de forma confiable —
+  ver el docstring de la función para el detalle de la heurística de
+  identificación de filas y su fallback ante tablas con menos columnas.
 
 FUENTES INVESTIGADAS Y DESCARTADAS POR FALTA DE EVIDENCIA (no implementadas
 por no poder verificarlas en vivo desde este entorno — ver más abajo):
@@ -63,6 +66,7 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -309,37 +313,134 @@ def consultar_fuente_oficial_scraper(boletin, prm_id):
 def extraer_estado_resumen(html):
     """El texto del campo 'Estado' tal como lo muestra camara.cl (ej.
     'Segundo trámite constitucional / Senado'). Es la única fuente
-    disponible hoy para el estado real — ver nota del módulo."""
+    disponible hoy para el estado real — ver nota del módulo.
+
+    Implementado con BeautifulSoup (antes: un regex que asumía un patrón
+    exacto de tags entre la etiqueta "Estado" y su valor). Busca el nodo de
+    texto "Estado" en el árbol DOM real y toma el siguiente nodo de texto no
+    vacío del documento — tolera cualquier anidamiento de tags entre medio,
+    a diferencia del regex anterior."""
     if not html:
         return None
-    m = re.search(r"Estado\s*</[^>]+>\s*(?:<[^>]+>\s*)*([^<]{3,150})<", html, re.IGNORECASE)
-    return m.group(1).strip() if m else None
+    soup = BeautifulSoup(html, "lxml")
+    for etiqueta in soup.find_all(string=re.compile(r"^\s*Estado\s*$", re.IGNORECASE)):
+        siguiente = etiqueta
+        for _ in range(6):  # tolerancia: unos pocos nodos de por medio (tags vacíos, whitespace)
+            siguiente = siguiente.find_next(string=True)
+            if siguiente is None:
+                break
+            texto = siguiente.strip()
+            if texto and texto.lower() != "estado":
+                return texto[:150]
+    return None
+
+
+# Meses abreviados en español, como los presenta camara.cl (ej. "31 May.
+# 2024") — usados solo para poder ORDENAR actuaciones cronológicamente por
+# su fecha real; si una fecha no se puede interpretar, esa actuación
+# conserva su posición relativa en la tabla (sort estable) en vez de
+# perderse.
+_MESES_ACTUACION = {
+    "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
+    "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
+}
+
+
+def _parsear_fecha_actuacion(texto_fecha):
+    """'31 May. 2024' -> date(2024, 5, 31). None si no se puede interpretar
+    — nunca se aproxima ni se inventa una fecha."""
+    if not texto_fecha:
+        return None
+    m = re.search(r"(\d{1,2})\s+([a-zA-Záéíóú]{3,})\.?\s+(\d{4})", texto_fecha, re.IGNORECASE)
+    if not m:
+        return None
+    mes = _MESES_ACTUACION.get(m.group(2).lower()[:3])
+    if mes is None:
+        return None
+    try:
+        return datetime.date(int(m.group(3)), mes, int(m.group(1)))
+    except ValueError:
+        return None
+
+
+def _fila_parece_actuacion(celdas_texto):
+    """Heurística de identificación de una fila real de tramitación: al
+    menos 3 celdas de texto, con la primera con forma de fecha oficial
+    ('31 May. 2024' o similar). No depende de conocer clases/IDs del HTML
+    real — solo de la forma del contenido — así que sigue siendo válida
+    aunque cambien los estilos o la estructura de la página."""
+    if len(celdas_texto) < 3:
+        return False
+    primera = celdas_texto[0]
+    return bool(primera and re.search(r"\d{4}|\w{3}\.", primera))
 
 
 def extraer_actuaciones_html(html):
-    """TODAS las filas de la tabla de tramitación del HTML, en el orden en
-    que camara.cl las presenta — no solo la última.
+    """TODAS las actuaciones de la tabla de tramitación del HTML, ordenadas
+    cronológicamente por su fecha real — no solo la última fila, y no en el
+    orden en que la página las liste (nunca se asume que la tabla ya viene
+    ordenada).
 
-    Hallazgo de auditoría (causa raíz de que el historial de varios
-    proyectos solo mostrara el ingreso o quedara vacío): esta función antes
-    se llamaba extraer_ultima_actuacion() y devolvía únicamente filas[-1],
-    descartando el resto de la tabla. La tabla oficial de tramitación ya
-    trae la secuencia completa (Fecha, Sesión, Etapa, Sub-etapa) de todas
-    las actuaciones del proyecto — se estaba descartando esa información
-    en la propia extracción, antes de que le llegara al backend.
-    ejecutar_monitoreo() ahora reconstruye la secuencia completa de cambios
-    de etapa a partir de esta lista (ver más abajo)."""
+    Implementado con BeautifulSoup (antes: regex sobre <tr>/<td>, frágil
+    ante cualquier anidamiento o variación del HTML real — un enfoque
+    conocido por no ser confiable para parsear HTML). La identificación de
+    qué fila es una actuación real sigue siendo por heurística de
+    contenido (ver _fila_parece_actuacion): primero se exige >= 4 celdas
+    (Fecha, Sesión, Etapa, Sub-etapa); si esa búsqueda estricta no
+    encuentra ninguna fila, se reintenta con un umbral más permisivo (>= 3
+    celdas) y se deja un WARNING explícito en el log — así queda
+    diagnosticable si la fuente real cambió a un formato de tabla más
+    angosto, en vez de fallar en silencio.
+
+    Hallazgo de auditoría previo (causa raíz de que el historial de varios
+    proyectos solo mostrara el ingreso o quedara vacío): esta función se
+    llamaba antes extraer_ultima_actuacion() y devolvía únicamente la
+    última fila. ejecutar_monitoreo() reconstruye la secuencia completa de
+    cambios de etapa a partir de la lista que devuelve esta función."""
     if not html:
         return []
-    filas = []
-    for fila_html in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.IGNORECASE | re.DOTALL):
-        celdas = re.findall(r"<td[^>]*>(.*?)</td>", fila_html, re.IGNORECASE | re.DOTALL)
-        if len(celdas) >= 4:
-            limpio = [re.sub("<[^>]+>", "", c).strip() for c in celdas]
-            if limpio[0] and re.search(r"\d{4}|\w{3}\.", limpio[0]):
-                filas.append({"fecha": limpio[0], "sesion": limpio[1], "etapa": limpio[2],
-                               "sub_etapa": limpio[3] if len(limpio) > 3 else None})
-    return filas
+
+    soup = BeautifulSoup(html, "lxml")
+    filas_html = soup.find_all("tr")
+
+    def _extraer(min_celdas):
+        resultado = []
+        for fila in filas_html:
+            celdas = fila.find_all("td")
+            if len(celdas) < min_celdas:
+                continue
+            # separador " " + normalización de espacios: sin el separador,
+            # texto repartido en varios tags anidados dentro de la misma
+            # celda (ej. "Sesión <strong>5</strong>") queda pegado
+            # ("Sesión5") en vez de "Sesión 5".
+            texto = [re.sub(r"\s+", " ", c.get_text(" ", strip=True)).strip() for c in celdas]
+            if _fila_parece_actuacion(texto):
+                resultado.append({
+                    "fecha": texto[0],
+                    "sesion": texto[1] if len(texto) > 1 else None,
+                    "etapa": texto[2] if len(texto) > 2 else None,
+                    "sub_etapa": texto[3] if len(texto) > 3 else None,
+                })
+        return resultado
+
+    filas = _extraer(4)
+    if not filas and filas_html:
+        logger.warning(
+            "extraer_actuaciones_html: ninguna fila con >= 4 celdas coincidió con el patrón de "
+            "actuación (%d <tr> encontrados en total) — reintentando con un umbral más permisivo "
+            "(>= 3 celdas). Si esto se repite, es señal de que la tabla real de camara.cl cambió "
+            "de estructura y esta heurística necesita revisarse contra el HTML real.",
+            len(filas_html),
+        )
+        filas = _extraer(3)
+
+    # Orden cronológico explícito por la fecha real de cada actuación — no
+    # se asume que la tabla ya viene ordenada. Sort estable: las
+    # actuaciones sin fecha interpretable conservan su posición relativa
+    # (no se pierden, no se inventa una fecha para ordenarlas).
+    filas_con_fecha = [(f, _parsear_fecha_actuacion(f["fecha"])) for f in filas]
+    filas_con_fecha.sort(key=lambda par: (par[1] is None, par[1] or datetime.date.min))
+    return [f for f, _fecha in filas_con_fecha]
 
 
 # =====================================================================
