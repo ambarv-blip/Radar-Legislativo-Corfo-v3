@@ -510,11 +510,6 @@ main {
   font-size: 11px;
 }
 
-.evento p.evento-meta {
-  margin-top: 4px;
-  font-size: 12px;
-}
-
 .evento.evento-ley-publicada::before {
   background: var(--color-ley-vigente);
 }

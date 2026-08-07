@@ -122,14 +122,14 @@ function esEventoRelevante(evento) {
 }
 
 // Ícono según el tipo de evento — coincide con el vocabulario que ya usan
-// tanto los eventos históricos migrados ("Ingreso de proyecto", "Votación
-// en comisión", "Aprobación", "Promulgación y Publicación") como el motor
-// de monitoreo en vivo ("Votación registrada", "Cambio de estado (detectado
-// por el Observatorio)") — no requiere tocar monitor_engine.py.
+// tanto los eventos históricos migrados ("Ingreso de proyecto", "Aprobación",
+// "Promulgación y Publicación") como el motor de monitoreo en vivo ("Cambio
+// de estado (detectado por el Observatorio)") — no requiere tocar
+// monitor_engine.py. Las votaciones no tienen ícono propio porque nunca
+// llegan a esta función: se filtran antes (ver esHitoDeEtapa).
 function iconoEvento(tipoEvento) {
   const t = (tipoEvento || "").toLowerCase();
   if (t.includes("ingreso")) return "📥";
-  if (t.includes("votaci")) return "🗳️";
   if (t.includes("promulgaci") || t.includes("publicaci")) return "📜";
   if (t.includes("aprobaci")) return "✅";
   if (t.includes("cambio de estado")) return "🔄";
@@ -139,14 +139,23 @@ function iconoEvento(tipoEvento) {
 // El estado "nuevo" que declara un evento, pero solo si realmente es una
 // etapa distinta a la anterior. Una votación dentro de la misma etapa (ej.
 // AFIDE, 10 Dic. 2025: estado_anterior === estado_nuevo === "Segundo
-// trámite constitucional") no es un cambio de etapa — no debe repetirse la
-// misma cápsula de estado sin motivo (ver punto 3 del pedido).
+// trámite constitucional") no es un cambio de etapa.
 function estadoNuevoDeclarado(evento) {
   if (!evento.estado_nuevo) return null;
   if (evento.estado_anterior && evento.estado_anterior.trim() === evento.estado_nuevo.trim()) {
     return null;
   }
   return evento.estado_nuevo;
+}
+
+// Un hito de etapa es un evento que efectivamente declara una etapa nueva
+// (ver estadoNuevoDeclarado). Esto excluye automáticamente votaciones,
+// sesiones de comisión y cualquier actuación administrativa que no implique
+// un cambio real de trámite — sin necesidad de una lista de tipos "técnicos"
+// a mano: cualquier evento que no mueva el trámite de una etapa a otra
+// simplemente no es un hito legislativo.
+function esHitoDeEtapa(evento) {
+  return Boolean(estadoNuevoDeclarado(evento));
 }
 
 // Extrae "Ley N° 21.813" de un texto oficial (estado_actual o la
@@ -373,21 +382,17 @@ export default function ProjectDetail() {
 
   const estado = estiloEstado(proyecto.estado_actual);
 
-  // Pipeline de la línea de tiempo: descarta ruido -> elimina duplicados ->
-  // ordena de más reciente a más antiguo por la fecha real del evento
-  // (nunca por orden de inserción).
-  const eventosTimeline = ordenarEventosPorFecha(
+  // Todos los eventos relevantes, deduplicados y ordenados de más reciente a
+  // más antiguo por la fecha real del evento (nunca por orden de inserción).
+  // Se usa completo (sin filtrar por hito) para el chequeo de consistencia y
+  // para ubicar el evento de promulgación/publicación — una votación, aunque
+  // no se muestre como hito propio, sigue siendo el dato más reciente que
+  // confirma en qué etapa está el proyecto.
+  const eventosOrdenados = ordenarEventosPorFecha(
     deduplicarEventos(proyecto.eventos.filter(esEventoRelevante))
   );
 
-  // "Lo que dice la línea de tiempo" es el estado_nuevo del evento más
-  // reciente que efectivamente declara uno — incluida una votación que
-  // confirma la misma etapa (a diferencia de estadoNuevoDeclarado(), que se
-  // usa solo para decidir si UN evento puntual merece su propia cápsula).
-  // Se compara contra proyecto.estado_actual: si difieren, es una
-  // inconsistencia real entre la ficha y su propio historial, y se muestra
-  // explícitamente en vez de ocultarla o de adivinar cuál de los dos vale.
-  const ultimoEventoConEstado = eventosTimeline.find((ev) => ev.estado_nuevo);
+  const ultimoEventoConEstado = eventosOrdenados.find((ev) => ev.estado_nuevo);
   const estadoInconsistente =
     ultimoEventoConEstado &&
     proyecto.estado_actual &&
@@ -396,8 +401,16 @@ export default function ProjectDetail() {
   const esLeyPublicada = proyectoEsLeyPublicada(proyecto.estado_actual);
   const numeroLey =
     extraerNumeroLey(proyecto.estado_actual) ||
-    extraerNumeroLey(eventosTimeline.map((ev) => ev.descripcion).join(" "));
-  const eventoPublicacion = eventosTimeline.find((ev) => /promulgaci|publicaci/i.test(ev.tipo_evento || ""));
+    extraerNumeroLey(eventosOrdenados.map((ev) => ev.descripcion).join(" "));
+  const eventoPublicacion = eventosOrdenados.find((ev) => /promulgaci|publicaci/i.test(ev.tipo_evento || ""));
+
+  // Solo hitos de etapa (ver esHitoDeEtapa) — sin votaciones ni movimientos
+  // administrativos. Si el proyecto ya es ley, el evento de
+  // promulgación/publicación no se repite aquí: ya se muestra como la
+  // tarjeta "✅ Ley publicada" al inicio de la línea de tiempo.
+  const eventosTimeline = eventosOrdenados
+    .filter(esHitoDeEtapa)
+    .filter((ev) => !(esLeyPublicada && eventoPublicacion && ev.id === eventoPublicacion.id));
 
   return (
     <>
@@ -498,36 +511,11 @@ export default function ProjectDetail() {
         )}
 
         {eventosTimeline.length === 0 && !esLeyPublicada && (
-          <p className="vacio">Aún no hay eventos oficiales registrados para este proyecto.</p>
+          <p className="vacio">Aún no hay hitos legislativos registrados para este proyecto.</p>
         )}
 
         {(eventosTimeline.length > 0 || esLeyPublicada) && (
           <ul className="linea-tiempo">
-            {eventosTimeline.map((ev) => {
-              const estadoNuevo = estadoNuevoDeclarado(ev);
-              return (
-                <li className="evento" key={ev.id}>
-                  <div className="fecha-evento">
-                    <span aria-hidden="true">{iconoEvento(ev.tipo_evento)}</span>{" "}
-                    {ev.fecha_evento || "Fecha no disponible"}
-                  </div>
-                  <h4>{ev.tipo_evento || "Evento"}</h4>
-                  {ev.descripcion && <p>{ev.descripcion}</p>}
-                  {estadoNuevo && (
-                    <p className="evento-cambio-etapa">
-                      {ev.estado_anterior ? "Cambió de etapa → " : "Etapa: "}
-                      <span className={estiloEstado(estadoNuevo).clase}>{estiloEstado(estadoNuevo).texto}</span>
-                    </p>
-                  )}
-                  {ev.nivel_alerta && (
-                    <p className="evento-meta">
-                      Nivel de alerta: {ev.nivel_alerta} · Revisión: {ev.estado_revision_humana}
-                    </p>
-                  )}
-                </li>
-              );
-            })}
-
             {esLeyPublicada && (
               <li className="evento evento-ley-publicada" key="ley-publicada">
                 <div className="fecha-evento">
@@ -550,6 +538,26 @@ export default function ProjectDetail() {
                 )}
               </li>
             )}
+
+            {eventosTimeline.map((ev) => {
+              const estadoNuevo = estadoNuevoDeclarado(ev);
+              return (
+                <li className="evento" key={ev.id}>
+                  <div className="fecha-evento">
+                    <span aria-hidden="true">{iconoEvento(ev.tipo_evento)}</span>{" "}
+                    {ev.fecha_evento || "Fecha no disponible"}
+                  </div>
+                  <h4>{ev.tipo_evento || "Evento"}</h4>
+                  {ev.descripcion && <p>{ev.descripcion}</p>}
+                  {estadoNuevo && (
+                    <p className="evento-cambio-etapa">
+                      {ev.estado_anterior ? "Cambió de etapa → " : "Etapa: "}
+                      <span className={estiloEstado(estadoNuevo).clase}>{estiloEstado(estadoNuevo).texto}</span>
+                    </p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
