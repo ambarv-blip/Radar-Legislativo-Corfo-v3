@@ -153,6 +153,15 @@ function hitoDeRespaldo(proyecto) {
 // explicativo antes que un timeline con fechas potencialmente engañosas.
 const TIMELINE_EJECUTIVO_HABILITADO = false;
 
+// Bandera de activación del Análisis Ejecutivo IA — EN PAUSA para la versión
+// demo. Todo el código (componente, endpoint, prompt, backend) queda intacto
+// y listo para reactivarse: basta con volver esta constante a `true`. Con
+// `false`: no se renderiza la tarjeta, no se llama al endpoint
+// /analisis-ia (ver el efecto en ProjectDetail), y por lo tanto tampoco
+// aparece ningún mensaje del análisis (ni el skeleton, ni "No se encontró
+// información suficiente...", ni el placeholder de "aún no generado").
+const ANALISIS_IA_HABILITADO = false;
+
 // Los 6 bloques del Análisis Ejecutivo IA, en el orden fijo definido para la
 // funcionalidad. `lista: true` marca el único bloque que se muestra como
 // viñetas (aspectos_principales); `destacado: true` marca el bloque de
@@ -307,6 +316,7 @@ export default function ProjectDetail() {
   // no se vuelve a pedir. Mientras se genera, el panel muestra un skeleton
   // loader en vez del antiguo mensaje "Aún no se ha generado...".
   useEffect(() => {
+    if (!ANALISIS_IA_HABILITADO) return;
     if (!proyecto || proyecto.ultimo_analisis_ia) return;
     if (analisisSolicitadoParaId.current === proyecto.id) return;
     analisisSolicitadoParaId.current = proyecto.id;
@@ -432,11 +442,13 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      <AnalisisEjecutivoIA
-        ultimoAnalisisIA={proyecto.ultimo_analisis_ia}
-        generando={analisisGenerando}
-        errorGeneracion={analisisError}
-      />
+      {ANALISIS_IA_HABILITADO && (
+        <AnalisisEjecutivoIA
+          ultimoAnalisisIA={proyecto.ultimo_analisis_ia}
+          generando={analisisGenerando}
+          errorGeneracion={analisisError}
+        />
+      )}
 
       <div className="panel">
         <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>
