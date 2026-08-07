@@ -4,3 +4,5 @@ sqlalchemy==2.0.35
 pydantic==2.9.2
 requests==2.32.3
 anthropic==0.120.2
+beautifulsoup4==4.15.0
+lxml==6.1.1
