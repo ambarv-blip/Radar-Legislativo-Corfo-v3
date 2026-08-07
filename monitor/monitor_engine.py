@@ -31,6 +31,16 @@ la otra no tiene, y ambas se consultan siempre:
 Open Data aporta votaciones nuevas como eventos independientes. Ninguna de
 las dos fuentes bloquea a la otra — si una falla, la otra sigue aportando.
 
+- `extraer_actuaciones_html()`: la tabla de tramitación del HTML trae la
+  secuencia COMPLETA de actuaciones oficiales (Fecha, Sesión, Etapa,
+  Sub-etapa), no solo la más reciente. Hasta esta revisión, el código
+  (entonces extraer_ultima_actuacion()) descartaba todas las filas menos la
+  última — causa raíz de que varios proyectos mostraran el historial vacío
+  o incompleto pese a que la fuente oficial sí traía su evolución completa.
+  ejecutar_monitoreo() ahora reconstruye la secuencia entera de cambios de
+  etapa a partir de esta lista, además de (no en reemplazo de) el mecanismo
+  existente que compara el "Estado" resumen contra el guardado.
+
 FUENTES INVESTIGADAS Y DESCARTADAS POR FALTA DE EVIDENCIA (no implementadas
 por no poder verificarlas en vivo desde este entorno — ver más abajo):
 - Métodos hipotéticos retornarTramitaciones / retornarTramites /
@@ -306,13 +316,21 @@ def extraer_estado_resumen(html):
     return m.group(1).strip() if m else None
 
 
-def extraer_ultima_actuacion(html):
-    """Última fila de la tabla de tramitación del HTML — se usa solo para
-    describir el evento de 'cambio de estado' cuando extraer_estado_resumen
-    detecta una diferencia; no se usa para deduplicar (no tiene un id
-    estable en el HTML, a diferencia de las votaciones de Open Data)."""
+def extraer_actuaciones_html(html):
+    """TODAS las filas de la tabla de tramitación del HTML, en el orden en
+    que camara.cl las presenta — no solo la última.
+
+    Hallazgo de auditoría (causa raíz de que el historial de varios
+    proyectos solo mostrara el ingreso o quedara vacío): esta función antes
+    se llamaba extraer_ultima_actuacion() y devolvía únicamente filas[-1],
+    descartando el resto de la tabla. La tabla oficial de tramitación ya
+    trae la secuencia completa (Fecha, Sesión, Etapa, Sub-etapa) de todas
+    las actuaciones del proyecto — se estaba descartando esa información
+    en la propia extracción, antes de que le llegara al backend.
+    ejecutar_monitoreo() ahora reconstruye la secuencia completa de cambios
+    de etapa a partir de esta lista (ver más abajo)."""
     if not html:
-        return None
+        return []
     filas = []
     for fila_html in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.IGNORECASE | re.DOTALL):
         celdas = re.findall(r"<td[^>]*>(.*?)</td>", fila_html, re.IGNORECASE | re.DOTALL)
@@ -321,7 +339,7 @@ def extraer_ultima_actuacion(html):
             if limpio[0] and re.search(r"\d{4}|\w{3}\.", limpio[0]):
                 filas.append({"fecha": limpio[0], "sesion": limpio[1], "etapa": limpio[2],
                                "sub_etapa": limpio[3] if len(limpio) > 3 else None})
-    return filas[-1] if filas else None
+    return filas
 
 
 # =====================================================================
@@ -522,8 +540,15 @@ def ejecutar_monitoreo(boletin, prm_id, estado_actual_guardado, ids_externos_exi
     pueda igual, sin bloquearse por la ausencia de la otra fuente.
 
     ids_externos_existentes: set de Evento.id_externo ya guardados en el
-    timeline de este proyecto — se usa para no duplicar votaciones ya
-    registradas en actualizaciones anteriores.
+    timeline de este proyecto — se usa para no duplicar votaciones, hitos de
+    etapa o cambios de estado ya registrados en actualizaciones anteriores.
+
+    Si la fuente HTML responde con éxito, esta función también reconstruye
+    la secuencia COMPLETA de cambios de etapa que trae la tabla oficial de
+    tramitación (ver extraer_actuaciones_html) — no solo el estado vigente.
+    En un proyecto que nunca se había actualizado, esto puede backfillear de
+    una sola vez todo su historial oficial de etapas (Ingreso, Primer
+    trámite, Segundo trámite, ...).
 
     Devuelve dict:
       resultado: 'sin_cambios' | 'nuevo_evento' | 'error_tecnico'
@@ -534,7 +559,8 @@ def ejecutar_monitoreo(boletin, prm_id, estado_actual_guardado, ids_externos_exi
     """
     html = consultar_fuente_oficial_scraper(boletin, prm_id)
     estado_html = extraer_estado_resumen(html["texto"]) if html["exito"] else None
-    ultima_actuacion_html = extraer_ultima_actuacion(html["texto"]) if html["exito"] else None
+    actuaciones_html = extraer_actuaciones_html(html["texto"]) if html["exito"] else []
+    ultima_actuacion_html = actuaciones_html[-1] if actuaciones_html else None
 
     od = consultar_open_data(boletin)
     votaciones = extraer_votaciones_open_data(od["contenido"], boletin) if od["exito"] else []
@@ -568,16 +594,64 @@ def ejecutar_monitoreo(boletin, prm_id, estado_actual_guardado, ids_externos_exi
                 "nivel_alerta": "Informativa",
             })
 
-    # 2) Cambio de Estado (HTML) — la única fuente que sabe el estado real.
+    # 2) Secuencia completa de cambios de etapa (HTML) — reconstruida a
+    # partir de TODAS las filas de la tabla de tramitación oficial, no solo
+    # la última (ver extraer_actuaciones_html). Cada cambio de "Etapa" entre
+    # una fila y la siguiente es un hito real de la fuente oficial: se
+    # registra tal cual, con el texto literal que trae la tabla — nunca se
+    # reformula ni se infiere. Deduplicado por id_externo propio (namespace
+    # "html-etapa-", distinto del "html-estado-" del punto 3) para que
+    # actualizaciones futuras no vuelvan a crear los mismos hitos.
+    etapa_anterior = None
+    for fila in actuaciones_html:
+        etapa_actual = (fila.get("etapa") or "").strip()
+        if not etapa_actual or etapa_actual == etapa_anterior:
+            continue
+        id_externo_etapa = f"html-etapa-{boletin}-{fila.get('fecha')}-{etapa_actual}"[:250]
+        if id_externo_etapa not in ids_externos_existentes:
+            eventos_nuevos.append({
+                "id_externo": id_externo_etapa,
+                "fecha_evento": fila.get("fecha"),
+                "tipo_evento": "Ingreso de proyecto" if etapa_anterior is None
+                               else "Cambio de estado (detectado por el Observatorio)",
+                "descripcion": fila.get("sub_etapa") or "Sin descripción disponible",
+                "estado_anterior": etapa_anterior,
+                "estado_nuevo": etapa_actual,
+                "fuente": "camara.cl (ficha de tramitación oficial)",
+                "enlace": html["url_consultada"],
+                "nivel_alerta": "Informativa" if etapa_anterior is None else "Media",
+            })
+        etapa_anterior = etapa_actual
+
+    # 3) Cambio de Estado (HTML, "Estado" resumen) — la única fuente que
+    # sabe con certeza cuál es el estado VIGENTE ahora mismo; sigue
+    # decidiendo si se actualiza Proyecto.estado_actual, independiente del
+    # punto 2 (que solo reconstruye el historial de eventos).
     estado_cambio = estado_html is not None and estado_html.strip() != (estado_actual_guardado or "").strip()
     if estado_cambio:
         id_externo_estado = f"html-estado-{boletin}-{estado_html}"[:250]
         if id_externo_estado not in ids_externos_existentes:
             ultima = ultima_actuacion_html or {}
+            # Si el proyecto nunca tuvo estado_actual guardado Y el estado
+            # vigente coincide con la primera etapa de la propia tabla (o
+            # sea, todavía no avanzó más allá de su primera etapa), este
+            # evento describe exactamente la misma transición que el
+            # "Ingreso de proyecto" del punto 2 — se etiqueta igual para que
+            # el deduplicador del frontend los reconozca como un solo hito
+            # en vez de mostrar dos. En cualquier otro caso (el proyecto ya
+            # avanzó más allá de su primera etapa) sigue siendo un cambio de
+            # estado real, no un ingreso.
+            primera_etapa_html = (
+                actuaciones_html[0]["etapa"].strip() if actuaciones_html and actuaciones_html[0].get("etapa") else None
+            )
+            es_transicion_de_ingreso = (
+                not estado_actual_guardado and primera_etapa_html and estado_html.strip() == primera_etapa_html
+            )
             eventos_nuevos.append({
                 "id_externo": id_externo_estado,
                 "fecha_evento": ultima.get("fecha"),
-                "tipo_evento": "Cambio de estado (detectado por el Observatorio)",
+                "tipo_evento": "Ingreso de proyecto" if es_transicion_de_ingreso
+                               else "Cambio de estado (detectado por el Observatorio)",
                 "descripcion": ultima.get("sub_etapa") or "Sin descripción disponible",
                 "estado_anterior": estado_actual_guardado,
                 "estado_nuevo": estado_html,
