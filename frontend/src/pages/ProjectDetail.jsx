@@ -122,16 +122,14 @@ function esEventoRelevante(evento) {
 }
 
 // Ícono según el tipo de evento — coincide con el vocabulario que ya usan
-// tanto los eventos históricos migrados ("Ingreso de proyecto", "Votación en
-// comisión", "Aprobación", "Promulgación y Publicación") como el motor de
-// monitoreo en vivo ("Votación registrada", "Cambio de estado (detectado por
-// el Observatorio)") — no requiere tocar monitor_engine.py. Una votación
-// normalmente no llega a esta función (esHitoDeEtapa la filtra), salvo que
-// sea el evento de respaldo que confirma la etapa vigente (ver más abajo).
+// tanto los eventos históricos migrados ("Ingreso de proyecto", "Aprobación",
+// "Promulgación y Publicación") como el motor de monitoreo en vivo ("Cambio
+// de estado (detectado por el Observatorio)") — no requiere tocar
+// monitor_engine.py. Las votaciones no tienen ícono propio porque nunca
+// llegan a esta función: se filtran antes (ver esHitoDeEtapa).
 function iconoEvento(tipoEvento) {
   const t = (tipoEvento || "").toLowerCase();
   if (t.includes("ingreso")) return "📥";
-  if (t.includes("votaci")) return "🗳️";
   if (t.includes("promulgaci") || t.includes("publicaci")) return "📜";
   if (t.includes("aprobaci")) return "✅";
   if (t.includes("cambio de estado")) return "🔄";
@@ -386,19 +384,9 @@ export default function ProjectDetail() {
 
   // Todos los eventos relevantes, deduplicados y ordenados de más reciente a
   // más antiguo por la fecha real del evento (nunca por orden de inserción).
-  // Se usa completo (sin filtrar por hito) para el chequeo de consistencia y
-  // para ubicar el evento de promulgación/publicación — una votación, aunque
-  // no se muestre como hito propio, sigue siendo el dato más reciente que
-  // confirma en qué etapa está el proyecto.
   const eventosOrdenados = ordenarEventosPorFecha(
     deduplicarEventos(proyecto.eventos.filter(esEventoRelevante))
   );
-
-  const ultimoEventoConEstado = eventosOrdenados.find((ev) => ev.estado_nuevo);
-  const estadoInconsistente =
-    ultimoEventoConEstado &&
-    proyecto.estado_actual &&
-    ultimoEventoConEstado.estado_nuevo.trim() !== proyecto.estado_actual.trim();
 
   const esLeyPublicada = proyectoEsLeyPublicada(proyecto.estado_actual);
   const numeroLey =
@@ -406,37 +394,16 @@ export default function ProjectDetail() {
     extraerNumeroLey(eventosOrdenados.map((ev) => ev.descripcion).join(" "));
   const eventoPublicacion = eventosOrdenados.find((ev) => /promulgaci|publicaci/i.test(ev.tipo_evento || ""));
 
-  // Solo hitos de etapa (ver esHitoDeEtapa) — sin votaciones ni movimientos
-  // administrativos. Si el proyecto ya es ley, el evento de
-  // promulgación/publicación no se repite aquí: ya se muestra como la
-  // tarjeta "✅ Ley publicada" al inicio de la línea de tiempo.
-  let eventosTimeline = eventosOrdenados
+  // Solo hitos de etapa reales, con fecha oficial (ver esHitoDeEtapa) — sin
+  // votaciones ni movimientos administrativos. Si el proyecto ya es ley, el
+  // evento de promulgación/publicación no se repite aquí: ya se muestra
+  // como la tarjeta "✅ Ley publicada" al inicio de la línea de tiempo. Si
+  // la fuente oficial no registró el hito de una etapa, esa etapa
+  // simplemente no aparece — el historial muestra solo lo que la fuente
+  // oficial confirma, sin tarjetas ni avisos explicando la ausencia.
+  const eventosTimeline = eventosOrdenados
     .filter(esHitoDeEtapa)
     .filter((ev) => !(esLeyPublicada && eventoPublicacion && ev.id === eventoPublicacion.id));
-
-  // Caso real detectado (ej. AFIDE): la fuente histórica nunca registró el
-  // momento exacto en que el proyecto pasó a su etapa actual — la única
-  // evidencia oficial disponible es una actuación DENTRO de esa etapa (ej.
-  // una votación en comisión con estado_anterior === estado_nuevo), que
-  // esHitoDeEtapa() descarta por no ser una transición. Sin esto, el
-  // historial visible se queda atrás del estado_actual real aunque el dato
-  // que lo respalda sí exista. Se agrega ese evento — nunca uno inventado —
-  // y se etiqueta honestamente como confirmación, no como transición.
-  const yaVisibleEnTimeline =
-    ultimoEventoConEstado &&
-    (eventosTimeline.some((ev) => ev.id === ultimoEventoConEstado.id) ||
-      (esLeyPublicada && eventoPublicacion && ultimoEventoConEstado.id === eventoPublicacion.id));
-  const eventoDeRespaldo =
-    !estadoInconsistente && ultimoEventoConEstado && !yaVisibleEnTimeline ? ultimoEventoConEstado : null;
-  if (eventoDeRespaldo) {
-    eventosTimeline = ordenarEventosPorFecha([...eventosTimeline, eventoDeRespaldo]);
-  }
-
-  // Si ni un hito genuino ni un evento de respaldo explican el estado
-  // actual, no hay ningún dato oficial en el historial que lo confirme —
-  // se declara explícitamente (nunca se inventa un evento para taparlo).
-  const faltaEvidenciaDelEstadoActual =
-    !estadoInconsistente && !ultimoEventoConEstado && Boolean(proyecto.estado_actual);
 
   return (
     <>
@@ -528,23 +495,7 @@ export default function ProjectDetail() {
       <div className="panel">
         <h1 style={{ fontSize: 16 }}>Historial legislativo</h1>
 
-        {estadoInconsistente && (
-          <p className="alerta-inconsistencia">
-            ⚠ El estado actual de la ficha (<strong>{proyecto.estado_actual}</strong>) no coincide con el
-            último estado registrado en la línea de tiempo (<strong>{ultimoEventoConEstado.estado_nuevo}</strong>).
-            Revisa el historial de eventos de este proyecto.
-          </p>
-        )}
-
-        {faltaEvidenciaDelEstadoActual && (
-          <p className="aviso-historial-incompleto">
-            ℹ No se encontró en el historial oficial ningún evento que confirme que el proyecto llegó a la
-            etapa <strong>"{proyecto.estado_actual}"</strong>. El estado actual proviene de la fuente oficial de
-            seguimiento, pero ese hito específico todavía no está registrado en el historial de eventos.
-          </p>
-        )}
-
-        {eventosTimeline.length === 0 && !esLeyPublicada && !faltaEvidenciaDelEstadoActual && (
+        {eventosTimeline.length === 0 && !esLeyPublicada && (
           <p className="vacio">Aún no hay hitos legislativos registrados para este proyecto.</p>
         )}
 
@@ -575,7 +526,6 @@ export default function ProjectDetail() {
 
             {eventosTimeline.map((ev) => {
               const estadoNuevo = estadoNuevoDeclarado(ev);
-              const esRespaldo = eventoDeRespaldo && ev.id === eventoDeRespaldo.id;
               return (
                 <li className="evento" key={ev.id}>
                   <div className="fecha-evento">
@@ -589,18 +539,6 @@ export default function ProjectDetail() {
                       {ev.estado_anterior ? "Cambió de etapa → " : "Etapa: "}
                       <span className={estiloEstado(estadoNuevo).clase}>{estiloEstado(estadoNuevo).texto}</span>
                     </p>
-                  )}
-                  {esRespaldo && (
-                    <>
-                      <p className="evento-cambio-etapa">
-                        Confirma la etapa vigente →{" "}
-                        <span className={estiloEstado(ev.estado_nuevo).clase}>{estiloEstado(ev.estado_nuevo).texto}</span>
-                      </p>
-                      <p className="evento-nota-respaldo">
-                        No se registró la fecha exacta en que el proyecto llegó a esta etapa; se muestra la
-                        actuación oficial más reciente que la confirma.
-                      </p>
-                    </>
                   )}
                 </li>
               );
