@@ -528,6 +528,25 @@ main {
   color: #7a1f1a;
 }
 
+/* Distinta de .alerta-inconsistencia a propósito: esto no es una
+   contradicción (dos datos que se pisan), es una ausencia de dato — tono
+   informativo, no de alerta. */
+.aviso-historial-incompleto {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: #eef3f7;
+  color: var(--texto-suave);
+}
+
+.evento p.evento-nota-respaldo {
+  margin-top: 4px;
+  font-size: 12px;
+  font-style: italic;
+}
+
 .placeholder-ia {
   font-style: italic;
   color: var(--texto-suave);
